@@ -16,5 +16,8 @@ data:
   PG_PORT: {{ .Values.config.postgres.port | quote }}
   PG_USER: {{ .Values.config.postgres.user | quote }}
   PG_DATABASE: {{ .Values.config.postgres.database | quote }}
+  # 'false' disables TLS entirely — a plain self-hosted PG (postgres:*-alpine)
+  # serves no TLS; 'true' (default) for production CloudNativePG which does.
+  VOSJ_DB_SSL: {{ .Values.config.postgres.ssl | quote }}
   # 'false' lets the app accept CloudNativePG self-signed certs (§14.4).
   VOSJ_DB_SSL_REJECT_UNAUTHORIZED: {{ .Values.config.postgres.sslRejectUnauthorized | quote }}

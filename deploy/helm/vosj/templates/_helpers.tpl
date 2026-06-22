@@ -107,11 +107,69 @@ mounted by key from the resolved Secret (fail-closed: keys may be empty until se
     configMapKeyRef:
       name: {{ include "vosj.configMapName" . }}
       key: PG_DATABASE
+- name: VOSJ_DB_SSL
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "vosj.configMapName" . }}
+      key: VOSJ_DB_SSL
 - name: VOSJ_DB_SSL_REJECT_UNAUTHORIZED
   valueFrom:
     configMapKeyRef:
       name: {{ include "vosj.configMapName" . }}
       key: VOSJ_DB_SSL_REJECT_UNAUTHORIZED
+- name: PG_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vosj.secretName" . }}
+      key: {{ .Values.secret.keys.pgPassword }}
+- name: VOSJ_LEDGER_HMAC_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vosj.secretName" . }}
+      key: {{ .Values.secret.keys.ledgerHmacKey }}
+- name: VOSJ_VAULT_MASTER_KEY
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vosj.secretName" . }}
+      key: {{ .Values.secret.keys.vaultMasterKey }}
+- name: VOSJ_AUTH_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "vosj.secretName" . }}
+      key: {{ .Values.secret.keys.authToken }}
+{{- end -}}
+
+{{/*
+vosj.migrateEnv — env for the pre-install/pre-upgrade migration HOOK.
+
+CRITICAL: a pre-upgrade hook runs BEFORE the release's ConfigMap is (re)applied,
+so it must NOT read values via configMapKeyRef — on first introduction of a new
+key the old ConfigMap lacks it and the hook pod dead-locks in
+CreateContainerConfigError until activeDeadlineSeconds. So the non-secret config
+is rendered as LITERAL values here (self-contained). Secrets stay as secretKeyRef
+because the Secret is created out-of-band BEFORE helm runs and is always present.
+*/}}
+{{- define "vosj.migrateEnv" -}}
+- name: VOSJ_PORT
+  value: {{ .Values.containerPort | quote }}
+- name: VOSJ_STATE_STORE
+  value: {{ .Values.config.stateStore | quote }}
+- name: VOSJ_AUTH_MODE
+  value: {{ .Values.config.authMode | quote }}
+- name: VOSJ_BASELINE_MAX_AGE_MS
+  value: {{ .Values.config.baselineMaxAgeMs | quote }}
+- name: PG_HOST
+  value: {{ .Values.config.postgres.host | quote }}
+- name: PG_PORT
+  value: {{ .Values.config.postgres.port | quote }}
+- name: PG_USER
+  value: {{ .Values.config.postgres.user | quote }}
+- name: PG_DATABASE
+  value: {{ .Values.config.postgres.database | quote }}
+- name: VOSJ_DB_SSL
+  value: {{ .Values.config.postgres.ssl | quote }}
+- name: VOSJ_DB_SSL_REJECT_UNAUTHORIZED
+  value: {{ .Values.config.postgres.sslRejectUnauthorized | quote }}
 - name: PG_PASSWORD
   valueFrom:
     secretKeyRef:

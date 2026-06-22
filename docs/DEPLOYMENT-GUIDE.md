@@ -29,7 +29,8 @@ Five ordered stages, each an idempotent script; `deploy-all.sh` runs them in ord
 |------|--------|------|
 | 00 | `00-provision-cluster.sh` | Creates the cluster (Azure Local **or** Azure); writes an isolated kubeconfig |
 | 10 | `10-build-image.sh` | `az acr build` the `vosj-ce` image into your ACR |
-| 20 | `20-deploy-vosj.sh` | Namespace + **fail-closed Secret** + **ACR pull secret** + `helm upgrade --install` + rollout wait |
+| 15 | `15-deploy-postgres.sh` | **pg mode only.** A persistent `postgres:16-alpine` StatefulSet + **one** PVC + `vosj-postgres` Service; `POSTGRES_PASSWORD` single-sourced from the `vosj-secret`. **Skipped in memory mode.** |
+| 20 | `20-deploy-vosj.sh` | Namespace + **fail-closed Secret** + **ACR pull secret** + `helm upgrade --install` + rollout wait. In pg mode also passes `config.stateStore=pg` + `config.postgres.*` (renders the migration Job) |
 | 30 | `30-deploy-devstations.sh` | N ephemeral devstation seats (code-server), one Secret each |
 | 40 | `40-verify.sh` | Smoke test: `/health` ok, `/api/templates` non-500, devstation pods Running |
 
@@ -116,7 +117,8 @@ It runs 00→10→20→30→40 with banners and a final summary (cluster, Vosj s
 cd deploy/poc
 bash 00-provision-cluster.sh --target azure-local   # ~20–40 min on Azure Local (polls provisioningState)
 bash 10-build-image.sh                              # ~30–60 s
-bash 20-deploy-vosj.sh                              # ~1–2 min (waits for rollout)
+bash 15-deploy-postgres.sh                          # pg mode ONLY (no-op in memory); ~1 min (waits for pg_isready)
+bash 20-deploy-vosj.sh                              # ~1–2 min (waits for rollout; runs the migration Job in pg mode)
 bash 30-deploy-devstations.sh                       # ~1–2 min
 bash 40-verify.sh                                   # seconds
 ```
@@ -202,9 +204,67 @@ cd deploy/poc
 
 ---
 
-## 9. Production notes (beyond the POC)
+## 9. Switch to Postgres (persistent state) + production notes
 
-- **State:** set `VOSJ_STATE_STORE=pg` and supply `PG_*`; run `npm run migrate` (the chart includes a migration Job).
-- **Secrets:** keep the ledger HMAC key in a real secret manager; rotating it invalidates the existing tamper-evident chain by design.
+### Persistent state — `VOSJ_STATE_STORE=pg`
+
+The default `memory` store is ideal for a throwaway demo but loses all data on a
+pod restart. To run Vosj against a **real, persistent PostgreSQL**, flip **one**
+variable — the automation does the rest:
+
+```bash
+cd deploy/poc
+export VOSJ_STATE_STORE=pg
+./deploy-all.sh --skip-cluster        # or a full run; or: ./15-deploy-postgres.sh && ./20-deploy-vosj.sh
+```
+
+**What `VOSJ_STATE_STORE=pg` turns on:**
+
+1. **Stage 15 (`15-deploy-postgres.sh`) is inserted** between build (10) and deploy
+   (20). It deploys a `postgres:16-alpine` **StatefulSet** with a **`ClusterIP`
+   Service named `vosj-postgres`** in the **same `vosj` namespace**, backed by
+   **exactly one** PVC (`PG_STORAGE`, default `5Gi`, default storageClass), and
+   waits for `pg_isready`. In `memory` mode the stage is a clean no-op.
+2. **Stage 20 points Vosj at it.** It passes the chart
+   `--set config.stateStore=pg` plus the non-secret connection values
+   (`config.postgres.host=vosj-postgres`, `port`, `user`, `database`,
+   `sslRejectUnauthorized`). The PG password is **not** passed on the command line —
+   it is the `PG_PASSWORD` key already inside the `vosj-secret`.
+3. **The migration Job runs automatically.** Because `config.stateStore=pg`, the
+   chart renders its **pre-install/pre-upgrade hook Job**, which runs
+   `npm run migrate` (applies `src/db/schema.sql`, idempotent `IF NOT EXISTS` DDL)
+   against Postgres **before** the Deployment rolls — the app never starts against
+   an un-migrated database.
+
+**Single-sourced password (no drift).** The generated `vosj-secret` carries a
+`PG_PASSWORD` key. Postgres sources its `POSTGRES_PASSWORD` from that **same**
+Secret/key (`secretKeyRef`), and the Vosj Deployment + migration Job read the
+**same** `PG_PASSWORD` via the chart. There is exactly one copy of the password,
+so the database and the app can never disagree. A re-run preserves it (never
+rotates a live key).
+
+**One PVC, on purpose.** Only Postgres gets a volume — a single, long-lived
+`ReadWriteOnce` PVC. The platform CSI hazard is *many simultaneous per-pod*
+volume attaches (a fleet-wide per-pod PVC roll wedged the disk CSI once); a single
+Postgres PVC is the supported pattern. **Devstations stay `emptyDir` / NO-PVC.**
+
+**No TLS to the DB (here).** A plain in-cluster `postgres:16-alpine` serves no TLS,
+so the pg-mode default `VOSJ_DB_SSL_REJECT_UNAUTHORIZED=false` makes
+`src/db/pool.js` connect with `ssl:{rejectUnauthorized:false}` (no certificate
+verification). Set it to `true` only against a DB that terminates TLS with a
+trusted certificate.
+
+> **Teardown is destructive in pg mode.** `teardown.sh` deletes the `vosj`
+> namespace, which cascade-removes the Postgres StatefulSet **and its PVC** (the
+> migration data). Back up the DB first if you need to keep it.
+
+A healthy pg-mode `/health` reports the live store:
+```json
+{"ok":true,"version":"0.1.0","store":"pg","storeOk":true,"ledgerOk":true,"workloads":0,"waves":0}
+```
+
+### Other production notes
+
+- **Secrets:** keep the ledger HMAC key in a real secret manager; rotating it invalidates the existing tamper-evident chain by design. For production-grade DB durability, run a managed/operator-backed Postgres (e.g. CloudNativePG) instead of the single-PVC POC StatefulSet, and front it with TLS (`VOSJ_DB_SSL_REJECT_UNAUTHORIZED=true`).
 - **Devstations:** they are **ephemeral by design** (emptyDir, no PVC) — durable per-pod volumes do not scale on every CSI; persist work to git/DB, not the pod.
 - **TLS/ingress, RBAC, waivers, the ledger:** see [`docs/user-guides/07-operations.md`](user-guides/07-operations.md).

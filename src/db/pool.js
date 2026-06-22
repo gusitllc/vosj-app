@@ -21,9 +21,13 @@ function getPool() {
     user: config.db.user,
     password: config.db.password,
     database: config.db.database,
-    ssl: config.db.sslRejectUnauthorized
-      ? { rejectUnauthorized: true }
-      : { rejectUnauthorized: false },
+    // ssl:false disables TLS entirely — a plain self-hosted PG serves no TLS, and
+    // passing any ssl object then fails with "server does not support SSL
+    // connections". When TLS IS used, rejectUnauthorized honours the
+    // self-signed-cert flag (CloudNativePG).
+    ssl: config.db.ssl
+      ? { rejectUnauthorized: config.db.sslRejectUnauthorized }
+      : false,
     max: 10,
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,

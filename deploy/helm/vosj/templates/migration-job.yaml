@@ -38,7 +38,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           command: ["npm", "run", "migrate"]
           env:
-            {{- include "vosj.env" . | nindent 12 }}
+            {{- include "vosj.migrateEnv" . | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

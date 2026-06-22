@@ -3,8 +3,11 @@
 # deploy-all.sh — END-TO-END Vosj POC orchestrator.
 #
 # Runs the whole POC FROM CODE, in order:
-#   00 provision cluster  ->  10 build image  ->  20 deploy Vosj
-#   ->  30 deploy devstations  ->  40 verify
+#   00 provision cluster  ->  10 build image  ->  [15 deploy Postgres, pg mode only]
+#   ->  20 deploy Vosj  ->  30 deploy devstations  ->  40 verify
+#
+# Stage 15 runs ONLY when VOSJ_STATE_STORE=pg (deploys a persistent Postgres that
+# Vosj then uses). In the default memory mode stage 15 is skipped entirely.
 #
 # Flags:
 #   --target azure|azure-local   substrate to provision (overrides config.env)
@@ -70,6 +73,15 @@ else
   "$SELF_DIR/10-build-image.sh"
 fi
 
+# --- stage 15: postgres (pg mode ONLY) ----------------------------------------
+# Deploy the persistent Postgres BEFORE Vosj so the chart's migration Job (which
+# 20 triggers) has a database to migrate. In memory mode this stage is skipped.
+if [ "${VOSJ_STATE_STORE:-memory}" = "pg" ]; then
+  "$SELF_DIR/15-deploy-postgres.sh"
+else
+  log_info "STAGE 15 skipped — VOSJ_STATE_STORE='${VOSJ_STATE_STORE:-memory}' (memory mode, no DB)"
+fi
+
 # --- stage 20: vosj -----------------------------------------------------------
 "$SELF_DIR/20-deploy-vosj.sh"
 
@@ -85,6 +97,9 @@ banner "POC DEPLOY COMPLETE"
 log_ok "elapsed       : $(( END_TS - START_TS ))s"
 log_ok "cluster       : $CLUSTER_NAME ($TARGET) — kubeconfig $KUBECONFIG_PATH"
 log_ok "vosj          : release '$VOSJ_RELEASE' in ns '$NAMESPACE_VOSJ' (store=$VOSJ_STATE_STORE)"
+if [ "${VOSJ_STATE_STORE:-memory}" = "pg" ]; then
+  log_ok "postgres      : '$PG_SERVICE' in ns '$NAMESPACE_VOSJ' (persistent, ${PG_STORAGE} PVC) — Vosj migrated + connected"
+fi
 log_ok "image         : ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 log_info "devstations:"
 for i in $(seq 1 "$DEVSTATION_COUNT"); do

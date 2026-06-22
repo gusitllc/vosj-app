@@ -90,6 +90,9 @@ config:
     port: 5432
     user: vosj
     database: vosj
+    # Use TLS at all. true (default) for production CloudNativePG (serves TLS);
+    # false for a plain self-hosted postgres:*-alpine that serves no TLS.
+    ssl: true
     # CloudNativePG ships a self-signed cert: set false to accept it (§14.4).
     sslRejectUnauthorized: false
 

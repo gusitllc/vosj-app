@@ -8,8 +8,15 @@
 #      `openssl rand -hex 32`) — secrets NEVER live in config.env or values.yaml.
 #      Idempotent: existing keys are preserved across re-runs (we never rotate a
 #      live ledger key by accident).
-#   3. helm upgrade --install referencing that existing secret, in memory store
-#      mode (POC default — no DB required).
+#   3. helm upgrade --install referencing that existing secret.
+#      - memory mode (POC default): no DB required, no PG flags.
+#      - pg mode (VOSJ_STATE_STORE=pg): point the chart at the Postgres deployed
+#        by stage 15 (config.stateStore=pg + config.postgres.{host,port,user,
+#        database} + the SSL flag). The PG password is NOT passed here — it is the
+#        PG_PASSWORD already inside the existing $VOSJ_SECRET_NAME (single-sourced
+#        with Postgres). Setting config.stateStore=pg also makes the chart render
+#        its pre-install/pre-upgrade migration Job, which runs `npm run migrate`
+#        against Postgres BEFORE the Deployment rolls.
 #   4. wait for rollout.
 #
 # Uses KUBECONFIG=deploy/poc/.kube/vosj-poc.config via the kc/hm wrappers.
@@ -86,12 +93,38 @@ if [ -n "${ACR_PULL_SECRET:-}" ]; then
   [ -n "$ACR_PULL_SECRET" ] && PULL_SET=(--set "imagePullSecrets[0].name=$ACR_PULL_SECRET")
 fi
 
+# --- PostgreSQL wiring (pg mode only) -----------------------------------------
+# In pg mode, pass the NON-SECRET connection parts so the chart's ConfigMap wires
+# PG_HOST/PG_PORT/PG_USER/PG_DATABASE + VOSJ_DB_SSL_REJECT_UNAUTHORIZED into both
+# the Deployment AND the migration Job (they share the env helper). The PG
+# password is intentionally NOT set here: it lives as PG_PASSWORD inside the
+# existing $VOSJ_SECRET_NAME (single-sourced with the Postgres POSTGRES_PASSWORD).
+# config.stateStore=pg ALSO triggers the chart's pre-install/pre-upgrade migration
+# Job, which runs `npm run migrate` against Postgres before the rollout proceeds.
+PG_SET=()
+if [ "$VOSJ_STATE_STORE" = "pg" ]; then
+  PG_SET=(
+    --set config.postgres.host="$PG_HOST"
+    --set config.postgres.port="$PG_PORT"
+    --set config.postgres.user="$PG_USER"
+    --set config.postgres.database="$PG_DATABASE"
+    --set config.postgres.ssl="$VOSJ_DB_SSL"
+    --set config.postgres.sslRejectUnauthorized="$VOSJ_DB_SSL_REJECT_UNAUTHORIZED"
+    --set migrationJob.enabled=true
+  )
+fi
+
 # --- helm upgrade --install ---------------------------------------------------
 log_info "deploying chart $CHART_DIR"
 log_info "  image      : ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
 log_info "  stateStore : $VOSJ_STATE_STORE"
 log_info "  replicas   : $VOSJ_REPLICAS"
 log_info "  secret     : existing '$VOSJ_SECRET_NAME' (fail-closed, out-of-band)"
+if [ "$VOSJ_STATE_STORE" = "pg" ]; then
+  log_info "  postgres   : ${PG_HOST}:${PG_PORT} db=${PG_DATABASE} user=${PG_USER} sslReject=${VOSJ_DB_SSL_REJECT_UNAUTHORIZED}"
+  log_info "  migration  : chart migration Job will run 'npm run migrate' (pre-install/pre-upgrade hook)"
+  log_info "  pg password: PG_PASSWORD from existing Secret '$VOSJ_SECRET_NAME' (single-sourced with Postgres)"
+fi
 
 hm upgrade --install "$VOSJ_RELEASE" "$CHART_DIR" \
   --namespace "$NAMESPACE_VOSJ" \
@@ -102,6 +135,7 @@ hm upgrade --install "$VOSJ_RELEASE" "$CHART_DIR" \
   --set config.stateStore="$VOSJ_STATE_STORE" \
   --set secret.create=false \
   --set secret.existingSecret="$VOSJ_SECRET_NAME" \
+  "${PG_SET[@]}" \
   "${PULL_SET[@]}" \
   --wait --timeout "${ROLLOUT_TIMEOUT}s"
 

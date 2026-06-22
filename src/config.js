@@ -35,8 +35,13 @@ const config = Object.freeze({
     user: PG_USER,
     password: process.env.PG_PASSWORD || '',
     database: PG_DATABASE,
-    // Default TRUE (verify). Set VOSJ_DB_SSL_REJECT_UNAUTHORIZED=false for
-    // CloudNativePG self-signed certs.
+    // Whether to use TLS at all. Default TRUE (production CloudNativePG serves TLS).
+    // Set VOSJ_DB_SSL=false for a plain self-hosted Postgres that serves no TLS
+    // (e.g. a POC postgres:16-alpine) — otherwise the driver fails the handshake
+    // with "The server does not support SSL connections".
+    ssl: process.env.VOSJ_DB_SSL !== 'false',
+    // When TLS IS used, whether to verify the cert chain. Default TRUE (verify).
+    // Set VOSJ_DB_SSL_REJECT_UNAUTHORIZED=false for CloudNativePG self-signed certs.
     sslRejectUnauthorized: process.env.VOSJ_DB_SSL_REJECT_UNAUTHORIZED !== 'false',
   }),
 

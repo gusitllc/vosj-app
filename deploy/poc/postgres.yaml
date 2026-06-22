@@ -1,0 +1,153 @@
+# =============================================================================
+# postgres.yaml — a minimal but PERSISTENT PostgreSQL for the Vosj POC pg mode.
+#
+# Deployed ONLY when VOSJ_STATE_STORE=pg (see 15-deploy-postgres.sh). It backs the
+# real `pg` StateStore so Vosj data survives pod restarts; memory mode never
+# touches this file.
+#
+# Rendered by 15-deploy-postgres.sh via `envsubst`. Substituted vars:
+#   ${NAMESPACE_VOSJ}     namespace (Postgres lives WITH Vosj so the in-cluster
+#                         Service name resolves as a bare hostname)
+#   ${PG_SERVICE}         the ClusterIP Service name the app's PG_HOST points at
+#   ${PG_PORT}            container + Service port (5432)
+#   ${PG_USER}            POSTGRES_USER  (must match the chart's config.postgres.user)
+#   ${PG_DATABASE}        POSTGRES_DB    (must match the chart's config.postgres.database)
+#   ${VOSJ_SECRET_NAME}   Secret carrying PG_PASSWORD (single-sourced — the SAME
+#                         password Vosj reads; see 15/20 coordination)
+#   ${PG_IMAGE}           postgres image (configurable, default postgres:16-alpine)
+#   ${PG_STORAGE}         PVC size (ONE PVC — fleet-wide many-at-once PVCs are the
+#                         CSI hazard; a single Postgres PVC is fine)
+#   ${PG_CPU_REQUEST} ${PG_CPU_LIMIT} ${PG_MEM_REQUEST} ${PG_MEM_LIMIT}
+#
+# POSTGRES_PASSWORD is sourced from the SAME Secret/key (PG_PASSWORD) that the Vosj
+# chart injects, so the database and the app are guaranteed to agree on credentials
+# — no second copy of the secret, no drift.
+#
+# CSI NOTE: this manifest declares exactly ONE PVC (volumeClaimTemplates, default
+# storageClass). The platform hard lesson is that MANY simultaneous per-pod PVC
+# attaches wedge the disk CSI; a single, long-lived Postgres PVC is the supported
+# pattern. Devstations stay emptyDir / NO-PVC.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PG_SERVICE}
+  namespace: ${NAMESPACE_VOSJ}
+  labels:
+    app.kubernetes.io/name: vosj-postgres
+    app.kubernetes.io/instance: ${PG_SERVICE}
+    app.kubernetes.io/part-of: vosj-poc
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: vosj-postgres
+    app.kubernetes.io/instance: ${PG_SERVICE}
+  ports:
+    - name: postgres
+      port: ${PG_PORT}
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ${PG_SERVICE}
+  namespace: ${NAMESPACE_VOSJ}
+  labels:
+    app.kubernetes.io/name: vosj-postgres
+    app.kubernetes.io/instance: ${PG_SERVICE}
+    app.kubernetes.io/part-of: vosj-poc
+spec:
+  serviceName: ${PG_SERVICE}
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vosj-postgres
+      app.kubernetes.io/instance: ${PG_SERVICE}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vosj-postgres
+        app.kubernetes.io/instance: ${PG_SERVICE}
+        app.kubernetes.io/part-of: vosj-poc
+    spec:
+      securityContext:
+        # postgres:16-alpine runs as uid 70 (the 'postgres' user) and needs to own
+        # its data dir; fsGroup lets the kubelet chown the mounted PVC to that group.
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: ${PG_IMAGE}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: postgres
+              containerPort: ${PG_PORT}
+          env:
+            - name: POSTGRES_USER
+              value: "${PG_USER}"
+            - name: POSTGRES_DB
+              value: "${PG_DATABASE}"
+            # SINGLE-SOURCED: the exact same Secret/key the Vosj chart injects as
+            # PG_PASSWORD. Database and app can never disagree on the password.
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ${VOSJ_SECRET_NAME}
+                  key: PG_PASSWORD
+            # Keep PGDATA in a subdir of the mount so lost+found / mount root never
+            # collide with initdb (a common StatefulSet-on-PVC gotcha).
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          resources:
+            requests:
+              cpu: "${PG_CPU_REQUEST}"
+              memory: "${PG_MEM_REQUEST}"
+            limits:
+              cpu: "${PG_CPU_LIMIT}"
+              memory: "${PG_MEM_LIMIT}"
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec pg_isready -U "${PG_USER}" -d "${PG_DATABASE}" -h 127.0.0.1
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - exec pg_isready -U "${PG_USER}" -d "${PG_DATABASE}" -h 127.0.0.1
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    # The ONE PVC. Default storageClass (omitted on purpose so the cluster's
+    # default provisioner is used). ReadWriteOnce — a single Postgres pod.
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: vosj-postgres
+          app.kubernetes.io/instance: ${PG_SERVICE}
+          app.kubernetes.io/part-of: vosj-poc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: ${PG_STORAGE}

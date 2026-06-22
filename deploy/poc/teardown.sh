@@ -55,6 +55,14 @@ if [ -f "$KUBECONFIG_PATH" ] && kc cluster-info >/dev/null 2>&1; then
     log_info "helm release '$VOSJ_RELEASE' not found — skipping"
   fi
 
+  # In pg mode the persistent Postgres (StatefulSet + its single PVC) lives IN
+  # $NAMESPACE_VOSJ, so deleting the namespace cascade-removes the PVC and its
+  # data. This is intentional teardown — back up the DB first if you need to keep
+  # the migration data beyond the POC.
+  if [ "${VOSJ_STATE_STORE:-memory}" = "pg" ]; then
+    log_warn "pg mode: deleting ns '$NAMESPACE_VOSJ' also removes Postgres '$PG_SERVICE' and its PVC (DATA LOSS)"
+  fi
+
   for ns in "$NAMESPACE_DEV" "$NAMESPACE_VOSJ"; do
     if kc get namespace "$ns" >/dev/null 2>&1; then
       log_info "deleting namespace '$ns'"
