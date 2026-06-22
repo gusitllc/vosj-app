@@ -1,0 +1,20 @@
+# configmap.yaml — non-secret runtime configuration for Vosj CE.
+# Secrets (HMAC key, vault master key, auth token, PG password) are NEVER here —
+# they live in the Secret object and are injected via secretKeyRef (see _helpers.tpl).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vosj.configMapName" . }}
+  labels:
+    {{- include "vosj.labels" . | nindent 4 }}
+data:
+  VOSJ_PORT: {{ .Values.containerPort | quote }}
+  VOSJ_STATE_STORE: {{ .Values.config.stateStore | quote }}
+  VOSJ_AUTH_MODE: {{ .Values.config.authMode | quote }}
+  VOSJ_BASELINE_MAX_AGE_MS: {{ .Values.config.baselineMaxAgeMs | quote }}
+  PG_HOST: {{ .Values.config.postgres.host | quote }}
+  PG_PORT: {{ .Values.config.postgres.port | quote }}
+  PG_USER: {{ .Values.config.postgres.user | quote }}
+  PG_DATABASE: {{ .Values.config.postgres.database | quote }}
+  # 'false' lets the app accept CloudNativePG self-signed certs (§14.4).
+  VOSJ_DB_SSL_REJECT_UNAUTHORIZED: {{ .Values.config.postgres.sslRejectUnauthorized | quote }}

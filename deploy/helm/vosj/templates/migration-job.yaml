@@ -1,0 +1,62 @@
+# migration-job.yaml — pre-install / pre-upgrade hook that applies the DB schema.
+# Runs `npm run migrate` (idempotent IF NOT EXISTS DDL) BEFORE the Deployment rolls,
+# so the app never starts against an un-migrated database. Only meaningful in pg mode.
+# Shares env (incl. PG_* + PG_PASSWORD secret) with the Deployment via the same helper.
+{{- if and .Values.migrationJob.enabled (eq .Values.config.stateStore "pg") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-migrate" (include "vosj.fullname" .) }}
+  labels:
+    {{- include "vosj.labels" . | nindent 4 }}
+  annotations:
+    # Hook runs before the rest of the release is created/upgraded.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    # Clean up the prior Job so re-runs don't collide on the immutable Job name.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrationJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "vosj.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "vosj.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command: ["npm", "run", "migrate"]
+          env:
+            {{- include "vosj.env" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

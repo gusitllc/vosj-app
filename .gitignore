@@ -9,3 +9,6 @@ coverage/
 .DS_Store
 dist/
 tmp/
+
+# private marketing site (deployed to CF Pages, NOT public)
+site/

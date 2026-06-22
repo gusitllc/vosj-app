@@ -90,6 +90,21 @@ CREATE TABLE IF NOT EXISTS vosj.tool_log (
   duration_ms INTEGER
 );
 
+-- Durable work-order queue (the bring-your-own-AI seam, R8). An external planner
+-- enqueues orders; a worker claims the next pending one with FOR UPDATE SKIP LOCKED
+-- so concurrent workers never grab the same row, then markDone/markFailed.
+CREATE TABLE IF NOT EXISTS vosj.orders (
+  id          TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  payload     JSONB NOT NULL DEFAULT '{}'::jsonb,
+  status      TEXT NOT NULL DEFAULT 'pending', -- pending | claimed | done | failed
+  claimed_by  TEXT,
+  claimed_at  TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS vosj_workloads_wave_idx ON vosj.workloads (wave_id);
 CREATE INDEX IF NOT EXISTS vosj_ledger_ts_idx ON vosj.ledger (ts);
 CREATE INDEX IF NOT EXISTS vosj_tool_log_ts_idx ON vosj.tool_log (ts);
+CREATE INDEX IF NOT EXISTS vosj_orders_status_idx ON vosj.orders (status, created_at);

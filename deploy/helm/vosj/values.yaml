@@ -1,0 +1,123 @@
+# values.yaml — Vosj Community Edition Helm chart defaults.
+# Hardened to whitepaper §15.8 (zero-trust, least privilege, fail-closed secrets).
+# Primary target: AKS enabled by Azure Arc on Azure Local; secondary: cloud AKS.
+#
+# Secrets are FAIL-CLOSED: VOSJ_LEDGER_HMAC_KEY and VOSJ_VAULT_MASTER_KEY have NO
+# default value. The app refuses to sign the ledger / operate the vault without
+# them (it never substitutes a default). Supply them via `secret.create` below or
+# reference a pre-existing Secret with `secret.existingSecret`.
+
+# -- Container image. Override repository/tag at deploy time.
+image:
+  repository: vosj-ce
+  # Pinned tag is required for reproducible rollouts (avoid :latest in prod).
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# -- Replica count. The engine is stateless (state lives in PG); scale freely in pg mode.
+replicaCount: 2
+
+# -- Container port the app listens on (maps to env VOSJ_PORT).
+containerPort: 8080
+
+service:
+  type: ClusterIP
+  port: 80
+
+# -- Resource requests/limits. Conservative defaults sized for Azure Local nodes.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+# -- Pod-level security context (non-root, no privilege escalation).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context. Read-only root FS; drop all caps.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Readiness/liveness probes hit the REAL /health endpoint.
+probes:
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  liveness:
+    initialDelaySeconds: 15
+    periodSeconds: 20
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ---------------------------------------------------------------------------
+# Application config (rendered into the ConfigMap, except secrets — see below).
+# ---------------------------------------------------------------------------
+config:
+  # State store: 'pg' (PostgreSQL, production) or 'memory' (ephemeral, demo only).
+  stateStore: pg
+
+  # Auth: 'token' (bearer, default/production) or 'open' (localhost dev only).
+  authMode: token
+
+  # Reconciliation baseline freshness guard (ms). Default 24h.
+  baselineMaxAgeMs: 86400000
+
+  # PostgreSQL connection (non-secret parts go in the ConfigMap; password is a Secret).
+  postgres:
+    host: ""
+    port: 5432
+    user: vosj
+    database: vosj
+    # CloudNativePG ships a self-signed cert: set false to accept it (§14.4).
+    sslRejectUnauthorized: false
+
+# ---------------------------------------------------------------------------
+# Secrets. Fail-closed values — no defaults. Two modes:
+#   1. secret.create=true + provide values here (templated into a Secret object).
+#   2. secret.create=false + secret.existingSecret="my-secret" to reference one
+#      you created out-of-band (recommended for production; keeps keys out of values).
+# ---------------------------------------------------------------------------
+secret:
+  create: true
+  existingSecret: ""
+  # Keys expected inside the Secret (used for both create and existingSecret modes).
+  keys:
+    ledgerHmacKey: VOSJ_LEDGER_HMAC_KEY
+    vaultMasterKey: VOSJ_VAULT_MASTER_KEY
+    authToken: VOSJ_AUTH_TOKEN
+    pgPassword: PG_PASSWORD
+  # Values used ONLY when secret.create=true. Leave empty and pass via --set /
+  # --set-file at install (e.g. --set secret.values.ledgerHmacKey=$(openssl rand -hex 32)).
+  values:
+    ledgerHmacKey: ""
+    vaultMasterKey: ""
+    authToken: ""
+    pgPassword: ""
+
+# -- Pre-install/upgrade migration Job (runs `npm run migrate` to apply schema.sql).
+migrationJob:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 300

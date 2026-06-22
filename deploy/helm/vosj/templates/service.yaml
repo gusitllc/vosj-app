@@ -1,0 +1,17 @@
+# service.yaml — exposes the Vosj CE deployment in-cluster (ClusterIP by default).
+# Front it with an Ingress/Gateway externally; keep the Service internal for zero-trust.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vosj.fullname" . }}
+  labels:
+    {{- include "vosj.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "vosj.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP

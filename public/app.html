@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<!-- public/app.html — Vosj CE Command Center (focused board).
+     Three live panels backed by the API module (/api/*):
+       1. WAVES — each wave's current phase, valid next states, and a per-state
+          "sign gate" action that POSTs /api/waves/:id/transition (human sign-off).
+       2. 7-R DISPOSITION board — the typed-contract table (Retire..Refactor),
+          high-risk reshapes forced onto incremental Strangler-Fig.
+       3. LEDGER console — tamper-evident hash-chained rows + a chain-verify badge
+          (GET /api/ledger/verify).
+     Vanilla JS + fetch + DOM only; no framework, no CDN. All server-supplied
+     content is escaped (esc()) before it touches the DOM (XSS). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vosj CE — Command Center</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
+      <div class="sub">Command Center — Community Edition</div>
+    </div>
+    <div class="spacer"></div>
+    <a class="back" href="index.html">&larr; Home</a>
+    <div class="token-box">
+      <label for="token" style="color:var(--muted);font-size:12px">Bearer</label>
+      <input id="token" type="password" placeholder="AUTH_TOKEN (blank = open/localhost)" autocomplete="off" />
+      <button class="ghost" id="saveToken">Save</button>
+      <button class="ghost" id="refreshAll">Refresh</button>
+    </div>
+  </header>
+
+  <!-- live /health strip -->
+  <div class="health-strip" id="healthStrip">
+    <span><span class="dot warn"></span>connecting&hellip;</span>
+  </div>
+
+  <main>
+    <!-- ===================== WAVES ===================== -->
+    <section class="card" id="wavesCard">
+      <h2>
+        <span>Waves &mdash; Phase &amp; Gate</span>
+        <span class="kv" id="wavesCount"></span>
+      </h2>
+      <p class="hint">Each wave walks a data-driven, signed-gate phase machine. A transition fires only
+        when a human in the gate's named role applies a signature (Invariant&nbsp;1: no agent self-sign).</p>
+      <div id="wavesList"><div class="empty">Loading waves&hellip;</div></div>
+    </section>
+
+    <!-- ===================== 7-R DISPOSITION BOARD ===================== -->
+    <section class="card" id="dispCard">
+      <h2><span>7-R Disposition Board</span></h2>
+      <p class="hint">Each disposition is a typed contract &lang;executor, runbook, reconciliation profile,
+        cutover style&rang; (&sect;7). High-risk reshapes (Relocate / Replatform / Refactor) resolve only to
+        incremental Strangler-Fig &mdash; a big-bang plan is <b>structurally unavailable</b>.</p>
+      <div class="disp-board" id="dispBoard"><div class="empty">Loading dispositions&hellip;</div></div>
+    </section>
+
+    <!-- ===================== LEDGER ===================== -->
+    <section class="card" id="ledgerCard">
+      <h2>
+        <span>Tamper-Evident Ledger</span>
+        <span id="chainStatus" class="chip">chain: unknown</span>
+      </h2>
+      <p class="hint">HMAC-SHA256 hash-chained transitions (&sect;12.2/&sect;14.4). Every signed gate is an
+        immutable row. &ldquo;Verify chain&rdquo; re-walks the chain and reports the first break, if any.</p>
+      <div class="form-row">
+        <button id="verifyChain">Verify Chain</button>
+        <button class="ghost" id="refreshLedger">Reload</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Seq</th><th>Time</th><th>Actor</th><th>Role</th><th>Action</th><th>Evidence</th><th>Hash</th></tr></thead>
+          <tbody id="ledgerBody"><tr><td colspan="7" class="empty">Loading ledger&hellip;</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>Vosj Community Edition &mdash; self-hosted, bring-your-own-AI migration engine. The execution moat is Enterprise.</footer>
+  <div id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

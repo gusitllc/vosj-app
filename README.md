@@ -138,6 +138,6 @@ Connectors and Executors are the heart of the community. See [`CONTRIBUTING.md`]
 
 ## License
 
-**Business Source License 1.1 (BSL‑1.1)** — source‑available; free for internal and non‑production use. The Additional Use Grant permits production use *except* offering Vosj to third parties as a competing hosted/managed migration service. Each release converts to **Apache‑2.0** on its Change Date (4 years). See [`LICENSE`](LICENSE).
+**MIT License** — © 2026 **Gus IT LLC**. Free and open source: use, modify, and distribute freely; just keep the copyright notice. See [`LICENSE`](LICENSE).
 
-*Managed Luca AI and per‑engineer digital twins (Enterprise Edition) are proprietary and not covered by this license.*
+*The managed Luca AI personas and per-engineer digital twins (the commercial Enterprise offering) are a separate hosted service; this MIT license covers the Vosj engine code in this repository.*
