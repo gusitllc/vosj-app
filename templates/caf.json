@@ -1,0 +1,129 @@
+{
+  "id": "caf",
+  "name": "Cloud Adoption Framework (7-phase gated)",
+  "source": "flagship",
+  "version": "1",
+  "description": "VOSJ flagship reference framework: a Cloud Adoption Framework spine compiled into seven gated phases P1..P7 mapped onto the V-O-S-J stations (whitepaper section 6). The Shift->Jump cutover gate is the engine-injected verified-before-Jump gate.",
+  "phases": [
+    {
+      "id": "P1",
+      "ordinal": 1,
+      "name": "Envision",
+      "station": "V",
+      "goal": "Strategy & business case: motivation, TCO/value case, readiness assessment across business/people/governance/platform/security/operations; target platform(s) chosen.",
+      "activities": ["motivation", "tco-value-case", "readiness-assessment", "target-platform-selection"],
+      "deliverables": ["business-case", "readiness-report", "target-platforms"],
+      "roles": ["director", "customer-sponsor"],
+      "gate": {
+        "id": "g-discovery-signoff",
+        "name": "Discovery sign-off",
+        "signoffRoles": ["director", "customer-sponsor"],
+        "signerRole": "director",
+        "criteria": ["business case approved", "readiness assessed", "target platform chosen"]
+      }
+    },
+    {
+      "id": "P2",
+      "ordinal": 2,
+      "name": "Examine",
+      "station": "V",
+      "goal": "Discover, baseline, decide: application-centric inventory + dependency DAG; performance/error baselines; a 7-R disposition for every in-scope workload; wave plan v0; risk register v0.",
+      "activities": ["inventory", "dependency-dag", "baseline", "disposition-7r", "wave-plan-v0"],
+      "deliverables": ["inventory", "dependency-dag", "baselines", "dispositions", "wave-plan-v0", "risk-register-v0"],
+      "roles": ["it-lead"],
+      "gate": {
+        "id": "g-kickoff-complete",
+        "name": "Kickoff complete",
+        "signoffRoles": ["it-lead"],
+        "signerRole": "it-lead",
+        "criteria": ["every in-scope workload carries a disposition", "dependency sort acyclic", "wave plan v0 exists"]
+      }
+    },
+    {
+      "id": "P3",
+      "ordinal": 3,
+      "name": "Engineer the Plan",
+      "station": "O",
+      "goal": "Transition architecture (TOGAF); data-migration method selection; cited cutover runbook; independent rollback runbook (separate author/context); static tabletops; change requests through four-eyes validation.",
+      "activities": ["transition-architecture", "data-method", "cutover-runbook", "independent-rollback-runbook", "tabletops", "four-eyes-validation"],
+      "deliverables": ["transition-architectures", "data-method-decision", "cutover-runbook", "rollback-runbook"],
+      "roles": ["dba", "director", "it-lead"],
+      "gate": {
+        "id": "g-planning-signoff",
+        "name": "Planning sign-off (data-method DBA; rollback-tabletop director+DBA)",
+        "signoffRoles": ["director", "it-lead"],
+        "signerRole": "director",
+        "criteria": ["runbook citations resolved", "rollback authored independently", "tabletops passed", "four-eyes validation complete"]
+      }
+    },
+    {
+      "id": "P4",
+      "ordinal": 4,
+      "name": "Establish Readiness",
+      "station": "O",
+      "goal": "Landing zone & freeze: built/validated landing zone (network, identity, security baseline); calendar lock; baseline-drift check; infra/app freeze; vendor engagements verified.",
+      "activities": ["build-landing-zone", "calendar-lock", "baseline-drift-check", "freeze", "vendor-verify"],
+      "deliverables": ["landing-zone", "freeze-record", "drift-check"],
+      "roles": ["infosec", "dba", "director"],
+      "gate": {
+        "id": "g-execution-freeze",
+        "name": "Execution freeze (drift auto; freeze InfoSec+DBA; vendor director)",
+        "signoffRoles": ["infosec", "dba"],
+        "signerRole": "infosec",
+        "criteria": ["baseline drift within window", "infra/app frozen", "vendors verified"]
+      }
+    },
+    {
+      "id": "P5",
+      "ordinal": 5,
+      "name": "Shift / Execute",
+      "station": "S",
+      "goal": "Verified incremental cutover: full-panel go/no-go; conductor steps the runbook calling executors via the bridge; Strangler-Fig parallel run / proxy switch; continuous contingency monitoring; per-step evidence hashed.",
+      "activities": ["go-no-go", "step-runbook", "strangler-fig-parallel-run", "contingency-monitoring", "hash-evidence"],
+      "deliverables": ["go-no-go-record", "per-step-evidence"],
+      "roles": ["director", "dba", "panel"],
+      "gate": {
+        "id": "g-go-no-go",
+        "name": "Go/no-go (full panel)",
+        "signoffRoles": ["director", "dba"],
+        "signerRole": "director",
+        "criteria": ["full-panel go decision", "contingency monitoring armed"]
+      }
+    },
+    {
+      "id": "P6",
+      "ordinal": 6,
+      "name": "Verify & Optimize",
+      "station": "J",
+      "goal": "Reconcile & tune: reconciliation (row counts, checksums, sequence/identity values, BLOB counts, constraint re-validation, plan parity); post-migration metrics vs baseline; right-sizing.",
+      "activities": ["reconciliation", "post-migration-metrics", "right-sizing"],
+      "deliverables": ["reconciliation-report", "performance-parity"],
+      "roles": ["dba"],
+      "gate": {
+        "id": "g-reconciliation-pass",
+        "name": "Reconciliation pass (DBA, revocable within 30 min on drift)",
+        "signoffRoles": ["dba"],
+        "signerRole": "dba",
+        "cutover": true,
+        "criteria": ["all pre-switch reconciliation categories within thresholds", "passing equivalence proof"]
+      }
+    },
+    {
+      "id": "P7",
+      "ordinal": 7,
+      "name": "Jump to BAU & Learn",
+      "station": "J",
+      "goal": "Hand over & improve: per-app BAU sign-off; monitoring/governance to steady state; decommission source after confirmed BAU + retention; post-mortem; lessons fed back into the template and the agent learning loop.",
+      "activities": ["bau-signoff", "steady-state-governance", "decommission-source", "post-mortem", "feedback-loop"],
+      "deliverables": ["bau-signoff", "post-mortem", "lessons-learned"],
+      "roles": ["it-lead", "director"],
+      "gate": {
+        "id": "g-completed-archived",
+        "name": "Completed / archived (director, partner attests)",
+        "signoffRoles": ["director"],
+        "signerRole": "director",
+        "criteria": ["return-to-BAU confirmed", "source decommissioned after retention", "post-mortem filed"]
+      }
+    }
+  ]
+}

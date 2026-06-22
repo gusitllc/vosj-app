@@ -1,0 +1,22 @@
+{
+  "name": "vosj-ce",
+  "version": "0.1.0",
+  "description": "Vosj Community Edition — open-source, self-hosted, AI-native application-migration & replatforming engine.",
+  "license": "AGPL-3.0-only",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test",
+    "migrate": "node -e \"require('./src/db/pool').migrate().then(r=>{console.log(r);process.exit(0)}).catch(e=>{console.error(e);process.exit(1)})\""
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "pg": "^8.12.0",
+    "dotenv": "^16.4.5"
+  }
+}

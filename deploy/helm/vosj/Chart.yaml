@@ -1,0 +1,23 @@
+apiVersion: v2
+name: vosj
+description: >-
+  Vosj Community Edition — open-source, self-hosted, AI-native application-migration
+  & replatforming engine. Hardened to whitepaper §15.8 (zero-trust, default-deny
+  egress, least privilege, fail-closed secrets). Primary target: AKS enabled by
+  Azure Arc on Azure Local (Azure Stack HCI); secondary: cloud AKS.
+type: application
+# Chart version is independent of the app version (set appVersion at release).
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.27.0-0"
+home: https://vosj.com
+sources:
+  - https://github.com/your-org/vosj
+keywords:
+  - migration
+  - replatforming
+  - azure-local
+  - azure-arc
+  - mcp
+maintainers:
+  - name: Vosj CE

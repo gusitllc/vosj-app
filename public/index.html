@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<!-- public/index.html — Vosj CE Command Center.
+     The "glass-room" live board (whitepaper §5.2): V·O·S·J pipeline, workloads &
+     7-R disposition, wave plan/shift, the human GATE SIGN panel (§6.1/§12), and
+     the tamper-evident ledger view + verify (§12.2/§14.4). Vanilla JS, no CDN. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vosj CE — Command Center</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
+      <div class="sub">Command Center — Community Edition</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="token-box">
+      <label for="token" style="color:var(--muted);font-size:12px">Bearer</label>
+      <input id="token" type="password" placeholder="AUTH_TOKEN (blank = open/localhost)" autocomplete="off" />
+      <button class="ghost" id="saveToken">Save</button>
+      <button class="ghost" id="refreshAll">Refresh</button>
+    </div>
+  </header>
+
+  <!-- live /health strip -->
+  <div class="health-strip" id="healthStrip">
+    <span><span class="dot warn"></span>connecting…</span>
+  </div>
+
+  <main>
+    <!-- ===================== V·O·S·J PIPELINE ===================== -->
+    <section class="card">
+      <h2>V·O·S·J Pipeline</h2>
+      <p class="hint">Station throughput by unit lifecycle (legacy → dual_running → reconciled → migrated).</p>
+      <div class="pipeline" id="pipeline"></div>
+    </section>
+
+    <div class="grid">
+      <!-- ===================== WORKLOADS ===================== -->
+      <section class="card col-12">
+        <h2>Workloads &amp; 7-R Disposition</h2>
+        <p class="hint">Disposition is a gate input (§7): high-risk reshapes (Relocate / Replatform / Refactor)
+          are forced onto incremental Strangler-Fig — big-bang is structurally unavailable.</p>
+
+        <div class="form-row">
+          <div class="field"><label for="wlId">ID</label><input id="wlId" placeholder="app-billing" /></div>
+          <div class="field"><label for="wlName">Name</label><input id="wlName" placeholder="Billing service" /></div>
+          <div class="field">
+            <label for="wlDisp">Disposition</label>
+            <select id="wlDisp"><option value="">(auto / heuristic)</option></select>
+          </div>
+          <div class="field"><label for="wlWave">Wave</label><select id="wlWave"><option value="">(unassigned)</option></select></div>
+          <button id="addWorkload">Add / Update</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Name</th><th>Disposition</th><th>Cutover</th><th>State</th><th>Wave</th><th>Actions</th></tr></thead>
+            <tbody id="workloadsBody"><tr><td colspan="7" class="empty">No workloads yet.</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid">
+      <!-- ===================== WAVES ===================== -->
+      <section class="card col-6">
+        <h2>Waves</h2>
+        <p class="hint">A wave is bound to a framework template and walks the gated phase machine.</p>
+        <div class="form-row">
+          <div class="field"><label for="waveId">ID</label><input id="waveId" placeholder="wave-1" /></div>
+          <div class="field"><label for="waveName">Name</label><input id="waveName" placeholder="Pilot wave" /></div>
+          <div class="field"><label for="waveTpl">Template</label><select id="waveTpl"></select></div>
+          <button id="addWave">Create</button>
+        </div>
+        <div id="wavesList"></div>
+      </section>
+
+      <!-- ===================== WAVE DETAIL ===================== -->
+      <section class="card col-6">
+        <h2>Wave Detail — Plan / Shift</h2>
+        <p class="hint" id="waveDetailHint">Select a wave to view its phase, gate, and plan.</p>
+        <div id="waveDetail"><div class="empty">No wave selected.</div></div>
+      </section>
+    </div>
+
+    <div class="grid">
+      <!-- ===================== GATE SIGN PANEL ===================== -->
+      <section class="card col-6">
+        <h2>Human Gate Sign</h2>
+        <p class="hint">Machines verify facts; humans accept accountability (§6.1).
+          Agents cannot self-sign (Invariant&nbsp;1); the author cannot be the signer (Invariant&nbsp;2).</p>
+
+        <div class="form-row">
+          <div class="field"><label for="signerId">Signer ID</label><input id="signerId" placeholder="jane.doe" /></div>
+          <div class="field">
+            <label for="signerRole">Role</label>
+            <select id="signerRole">
+              <option>director</option><option>it-lead</option><option>dba</option>
+              <option>infosec</option><option>customer-sponsor</option>
+            </select>
+          </div>
+        </div>
+        <div id="gatesPanel"><div class="empty">Select a wave to see its current gate.</div></div>
+      </section>
+
+      <!-- ===================== RECONCILE / JUMP ===================== -->
+      <section class="card col-6">
+        <h2>Reconcile &amp; Jump</h2>
+        <p class="hint">Verified-before-Jump (Invariant&nbsp;6): a unit cuts over only with a passing
+          reconciliation proof AND a human DBA signature. No proof → the Jump is unreachable (409).</p>
+
+        <div class="form-row">
+          <div class="field"><label for="recUnit">Unit</label><select id="recUnit"></select></div>
+          <div class="field"><label for="recConn">Connector</label><select id="recConn"><option value="demo">demo</option></select></div>
+          <button id="runReconcile">Reconcile</button>
+        </div>
+        <div id="reconcileResult"><div class="empty">Run a reconciliation to produce an equivalence proof.</div></div>
+      </section>
+    </div>
+
+    <!-- ===================== LEDGER ===================== -->
+    <section class="card">
+      <h2>Tamper-Evident Ledger</h2>
+      <p class="hint">HMAC-SHA256 hash-chained transitions (§12.2/§14.4). Every signed gate, reconcile, and
+        cutover is an immutable row. "Verify chain" re-walks the chain and reports the first break.</p>
+      <div class="form-row">
+        <button id="verifyChain">Verify Chain</button>
+        <button class="ghost" id="refreshLedger">Reload</button>
+        <span id="chainStatus" class="kv"></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Seq</th><th>Time</th><th>Actor</th><th>Role</th><th>Action</th><th>Evidence</th><th>Hash</th></tr></thead>
+          <tbody id="ledgerBody"><tr><td colspan="7" class="empty">Ledger empty.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>Vosj Community Edition — self-hosted, bring-your-own-AI migration engine. The execution moat is Enterprise.</footer>
+  <div id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
