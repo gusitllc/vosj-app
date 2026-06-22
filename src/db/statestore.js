@@ -19,6 +19,7 @@ class MemoryStateStore extends StateStore {
     this._gates = new Map(); // key = `${id}:${migrationId}`
     this._ledger = [];
     this._toolLog = [];
+    this._waivers = new Map();
   }
 
   async init() { return { ok: true }; }
@@ -65,6 +66,20 @@ class MemoryStateStore extends StateStore {
   async lastLedger() { return this._ledger[this._ledger.length - 1] || null; }
 
   async appendToolLog(row) { this._toolLog.push(row); return row; }
+
+  async listWaivers(filter = {}) {
+    let rows = [...this._waivers.values()];
+    if (filter.gateId) rows = rows.filter((w) => w.gate_id === filter.gateId);
+    if (filter.checkName) rows = rows.filter((w) => w.check_name === filter.checkName);
+    if (filter.status) rows = rows.filter((w) => (w.status || 'active') === filter.status);
+    return rows;
+  }
+  async saveWaiver(w) {
+    const row = Object.assign({ created_at: new Date().toISOString() },
+      this._waivers.get(w.id) || {}, w);
+    this._waivers.set(w.id, row);
+    return row;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +193,32 @@ class PgStateStore extends StateStore {
        VALUES (COALESCE($1, now()),$2,$3,$4,$5,$6,$7) RETURNING id`,
       [row.ts || null, row.server || null, row.tool, row.actor || null,
         row.arguments || {}, row.result || null, row.durationMs || null]);
+    return r.rows[0];
+  }
+
+  async listWaivers(filter = {}) {
+    const where = [];
+    const args = [];
+    if (filter.gateId) { args.push(filter.gateId); where.push(`gate_id = $${args.length}`); }
+    if (filter.checkName) { args.push(filter.checkName); where.push(`check_name = $${args.length}`); }
+    if (filter.status) { args.push(filter.status); where.push(`status = $${args.length}`); }
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const r = await this.pool.query(
+      `SELECT * FROM vosj.waivers ${clause} ORDER BY created_at`, args);
+    return r.rows;
+  }
+  async saveWaiver(w) {
+    const r = await this.pool.query(
+      `INSERT INTO vosj.waivers
+         (id, gate_id, reason, granted_by, expires_at, check_name, check_class, scope, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (id) DO UPDATE SET
+         gate_id=$2, reason=$3, granted_by=$4, expires_at=$5, check_name=$6,
+         check_class=$7, scope=$8, status=$9
+       RETURNING *`,
+      [w.id, w.gate_id || null, w.reason, w.granted_by, w.expires_at || null,
+        w.check_name || null, w.check_class || 'advisory', w.scope || null,
+        w.status || 'active']);
     return r.rows[0];
   }
 }

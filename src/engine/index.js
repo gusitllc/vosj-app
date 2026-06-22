@@ -11,6 +11,7 @@ const disposition = require('./disposition');
 const reconcile = require('./reconcile');
 const { StateMachine, UNIT_STATES, INJECTED_CUTOVER_GATE } = require('./state-machine');
 const { HumanGateSigner } = require('./gate');
+const { WaiverRegistry, evaluateChecks } = require('./waiver');
 
 const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
 
@@ -18,6 +19,7 @@ const TEMPLATES_DIR = path.join(__dirname, '..', '..', 'templates');
 function buildEngine({ config, store = null, ledger }) {
   if (!ledger) throw new Error('engine requires a ledger');
   const signer = new HumanGateSigner({ ledger, store });
+  const waivers = new WaiverRegistry({ store, ledger });
   const templates = template.loadDir(TEMPLATES_DIR);
 
   function getTemplate(id) {
@@ -33,6 +35,11 @@ function buildEngine({ config, store = null, ledger }) {
   return {
     config,
     signer,
+    waivers,
+
+    // advisory waiver enforcement (hard invariants remain structurally unwaivable)
+    tryWaive: (check, actor) => waivers.tryWaive(check, actor),
+    evaluateChecks: (checks, actor) => evaluateChecks(checks, waivers, actor),
 
     // templates
     listTemplates() { return Object.values(templates).map(summary); },

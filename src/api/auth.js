@@ -12,7 +12,20 @@
 
 'use strict';
 
+const { buildRegistry } = require('./rbac');
+
 const LOCAL_HOSTS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
+
+// Module-level RBAC registry. Empty (unconfigured) by default => requireCapability
+// preserves today's behaviour (the principal's own capability Set). configureRbac()
+// is called once by requireAuth(ctx) so routes need not change their call sites.
+let RBAC = buildRegistry(null);
+
+// configureRbac(config) -> install a role->capability registry from config. Idempotent.
+function configureRbac(config) {
+  RBAC = buildRegistry(config && config.RBAC_ROLE_CAPABILITIES);
+  return RBAC;
+}
 
 function isLocalRequest(req) {
   const ip = (req.ip || (req.socket && req.socket.remoteAddress) || '').toString();
@@ -36,6 +49,7 @@ function fail(res, code, error) {
 // req.principal = { id, kind:'agent'|'human', capabilities:Set, mode }.
 function requireAuth(ctx) {
   const { config, log } = ctx;
+  configureRbac(config); // install the (possibly empty) RBAC registry from config.
   return function authMiddleware(req, res, next) {
     // 'open' mode: localhost dev only. A remote caller is denied (fail-closed).
     if (config.AUTH_MODE === 'open') {
@@ -60,19 +74,36 @@ function requireAuth(ctx) {
   };
 }
 
-// requireCapability(cap) -> middleware. Caller must be authenticated AND hold the
-// named {domain}:{resource}:{action} capability. The capability is recorded on the
-// request so the route can bind it into the ledger meta (audit by-product, §12.2).
-function requireCapability(cap) {
+// requireCapability(cap, registry?) -> middleware. Caller must be authenticated
+// AND hold the named {domain}:{resource}:{action} capability. The capability is
+// recorded on the request so the route can bind it into the ledger meta (§12.2).
+//
+// Capability resolution (fail-closed, additive):
+//   - registry UNCONFIGURED -> today's behaviour: the principal's own Set.
+//   - registry CONFIGURED   -> the principal holds `cap` if EITHER its own Set
+//     holds it OR the registry grants it to the principal's role. A configured
+//     registry only ever GRANTS via an explicit role mapping; it never removes a
+//     capability the principal already carried, so it cannot break callers.
+function requireCapability(cap, registry) {
   return function capabilityMiddleware(req, res, next) {
     const p = req.principal;
     if (!p) return fail(res, 401, 'authentication required');
-    if (!p.capabilities || !p.capabilities.has(cap)) {
+    if (!holdsCapability(p, cap, registry || RBAC)) {
       return fail(res, 403, `missing capability: ${cap}`);
     }
     req.capability = cap;
     return next();
   };
+}
+
+// holdsCapability(principal, cap, registry) -> boolean. Set first (today's path),
+// then a configured role grant. Unconfigured registry => Set-only (no change).
+function holdsCapability(principal, cap, registry) {
+  if (principal.capabilities && principal.capabilities.has(cap)) return true;
+  if (registry && registry.configured && principal.role) {
+    return registry.grants(principal.role, cap);
+  }
+  return false;
 }
 
 // Constant-time-ish comparison to avoid trivial token length/early-exit leaks.
@@ -118,4 +149,7 @@ function openPrincipal() {
   return { id: 'localhost-dev', kind: 'agent', mode: 'open', capabilities: capabilitySet() };
 }
 
-module.exports = { requireAuth, requireCapability, CE_CAPABILITIES, isLocalRequest };
+module.exports = {
+  requireAuth, requireCapability, configureRbac, holdsCapability,
+  CE_CAPABILITIES, isLocalRequest,
+};

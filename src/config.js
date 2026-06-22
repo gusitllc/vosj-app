@@ -50,6 +50,13 @@ const config = Object.freeze({
   AUTH_MODE: process.env.VOSJ_AUTH_MODE || 'token',
   AUTH_TOKEN: process.env.VOSJ_AUTH_TOKEN || '',
 
+  // RBAC capability registry (optional). A JSON object string mapping a signer
+  // role to the capabilities it may exercise, e.g.
+  //   {"director":["migration:gate:sign"],"dba":["migration:reconcile:run"]}
+  // ABSENT/empty => the capability check falls back to the principal's own Set
+  // (today's behaviour). Malformed JSON fails closed to "unconfigured".
+  RBAC_ROLE_CAPABILITIES: process.env.VOSJ_RBAC_ROLE_CAPABILITIES || '',
+
   // Reconciliation / baseline tuning (configurable, never hardcoded at call sites).
   baselineMaxAgeMs: int(process.env.VOSJ_BASELINE_MAX_AGE_MS, 24 * 60 * 60 * 1000),
 });

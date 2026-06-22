@@ -68,7 +68,11 @@ CREATE TABLE IF NOT EXISTS vosj.ledger (
   hash           TEXT NOT NULL
 );
 
--- Waivers — exceptions to a gate criterion, themselves audited (second-line control).
+-- Waivers — exceptions to an ADVISORY (soft) gate criterion only, themselves
+-- audited (second-line control). A waiver may NEVER bypass a hard invariant
+-- (verified-before-cutover, no-agent-self-sign, separation-of-duties, ledger
+-- fail-closed, baseline-drift) — those are structurally unwaivable in the engine;
+-- the engine refuses to apply any waiver whose check_class is not 'advisory'.
 CREATE TABLE IF NOT EXISTS vosj.waivers (
   id          TEXT PRIMARY KEY,
   gate_id     TEXT,
@@ -77,6 +81,15 @@ CREATE TABLE IF NOT EXISTS vosj.waivers (
   expires_at  TIMESTAMPTZ,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Additive scoping columns (idempotent — safe on an existing waivers table).
+ALTER TABLE vosj.waivers ADD COLUMN IF NOT EXISTS check_name  TEXT;        -- the advisory check waived
+ALTER TABLE vosj.waivers ADD COLUMN IF NOT EXISTS check_class TEXT NOT NULL DEFAULT 'advisory'; -- only 'advisory' is honoured
+ALTER TABLE vosj.waivers ADD COLUMN IF NOT EXISTS scope       TEXT;        -- optional workload/wave id the waiver applies to
+ALTER TABLE vosj.waivers ADD COLUMN IF NOT EXISTS status      TEXT NOT NULL DEFAULT 'active'; -- active | revoked
+
+CREATE INDEX IF NOT EXISTS vosj_waivers_lookup_idx
+  ON vosj.waivers (gate_id, check_name, status);
 
 -- MCP tool-call log (§14.2) — the audit substrate for external interaction (R8).
 CREATE TABLE IF NOT EXISTS vosj.tool_log (

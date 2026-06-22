@@ -76,6 +76,11 @@ class StateStore {
   async lastLedger() { throw notImplemented('StateStore', 'lastLedger'); }
 
   async appendToolLog(row) { throw notImplemented('StateStore', 'appendToolLog'); }
+
+  // Waivers — advisory-only exceptions (see src/engine/waiver.js). Optional on a
+  // store; the engine treats their absence as "no waiver available" (fail-closed).
+  async listWaivers(filter) { throw notImplemented('StateStore', 'listWaivers'); }
+  async saveWaiver(waiver) { throw notImplemented('StateStore', 'saveWaiver'); }
 }
 
 module.exports = { Connector, Executor, GateSigner, AssessmentProvider, StateStore };

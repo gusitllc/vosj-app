@@ -1,12 +1,19 @@
 // src/connectors/sdk.js — Connector SDK for Vosj CE (§16).
-// Provides BaseConnector (a Connector with the §16.2 executor state machine,
-// a structured verify() proof scaffold over the §13 reconciliation categories,
-// and pre-flight guards the station conductor invokes but never bypasses) plus a
+// Provides BaseConnector (a Connector with the §16.2 executor state machine, a
+// fail-closed verify() proof scaffold over the §13 reconciliation categories, and
+// pre-flight guards the station conductor invokes but never bypasses) plus a
 // connector registry so adding/swapping a provider is a config+connector task,
 // not a redesign (§16.1, "durable pillars").
 //
-// To add a connector: extend BaseConnector, implement discover/replicate/
-// _verifyCategories/cutover/rollback, then `registry.register(new MyConnector())`.
+// To add a connector: extend BaseConnector, implement discover/replicate/cutover/
+// rollback + a probe set (see _probes / _verifyCategories), then
+// `registry.register(new MyConnector())`.
+//
+// HONEST verify() CONTRACT (§13): a category is reported ok ONLY when a probe has
+// actually MEASURED equivalence. A probe whose underlying SDK call is not yet
+// wired returns notVerified() — it does NOT fabricate a pass. So a connector with
+// unimplemented seams fails closed: the verified-before-Jump gate stays unreachable
+// until the real measurement exists.
 
 'use strict';
 
@@ -46,12 +53,35 @@ function category(name, ok, detail) {
   return { name, ok: Boolean(ok), detail: String(detail || '') };
 }
 
+// notVerified(reason) — the honest result of a probe whose real measurement has
+// not run (SDK seam unimplemented, or replication not yet completed). It NEVER
+// reports ok:true, so verify() cannot lie about an unproven category.
+function notVerified(reason) {
+  return { ok: false, detail: `not verified: ${reason || 'measurement unavailable'}` };
+}
+
+// verified(detail) — an affirmative probe result from a real measurement.
+function verified(detail) {
+  return { ok: true, detail: String(detail || 'verified') };
+}
+
+// MissingConfigError — thrown by requireConfig(); callers fail closed on it.
+class MissingConfigError extends Error {
+  constructor(keys) {
+    super(`missing required config: ${keys.join(', ')}`);
+    this.name = 'MissingConfigError';
+    this.keys = keys;
+  }
+}
+
 // BaseConnector — extend this, not Connector directly, to inherit the executor
-// state machine, pre-flight guard, and verify() proof assembly.
+// state machine, pre-flight guard, fail-closed config gating, and the probe-driven
+// verify() proof assembly.
 class BaseConnector extends Connector {
   constructor(meta = {}) {
     super(meta);
-    this._exec = new Map(); // unitId -> { state, history[] }
+    this._exec = new Map();     // unitId -> { state, history[] }
+    this._session = new Map();  // unitId -> replication session bookkeeping
   }
 
   // ----- executor state machine (§16.2) --------------------------------------
@@ -72,12 +102,28 @@ class BaseConnector extends Connector {
     return rec.state;
   }
 
+  // ----- fail-closed config gating -------------------------------------------
+  // requireConfig(ctx, keys) -> resolved config object, or throws MissingConfigError.
+  // Reads from ctx.env first (testable), then process.env. No silent defaults.
+  requireConfig(ctx, keys) {
+    const env = (ctx && ctx.env) || process.env || {};
+    const out = {};
+    const missing = [];
+    for (const k of keys) {
+      const v = env[k];
+      if (v === undefined || v === null || String(v) === '') missing.push(k);
+      else out[k] = String(v);
+    }
+    if (missing.length) throw new MissingConfigError(missing);
+    return out;
+  }
+
   // Pre-flight checks the conductor calls before executing. Subclasses override
-  // _preflight() to add provider-specific validation; base ensures replication.
+  // _preflight() to add provider-specific validation; base ensures unit identity.
   async validate(unit, ctx) {
     const checks = await this._preflight(unit, ctx);
     const ok = checks.every((c) => c.ok);
-    if (ok) this.advance(unit, 'validated');
+    if (ok && this.executorState(unit) === 'draft') this.advance(unit, 'validated');
     return { ok, checks };
   }
 
@@ -86,9 +132,10 @@ class BaseConnector extends Connector {
   }
 
   // ----- verify() proof scaffold (§13) ---------------------------------------
-  // Subclasses implement _verifyCategories(unit, ctx) -> [{name, ok, detail}].
-  // This wrapper normalises to the 6 pre-switch categories, fails closed on any
-  // missing one, and binds the result into a hashed proof reconcile.js consumes.
+  // Subclasses supply _probes(unit, ctx) -> { categoryName: async () => result }.
+  // Each probe returns verified()/notVerified() (or { ok, detail }). The default
+  // _verifyCategories runs every pre-switch probe; a missing or throwing probe is
+  // recorded as notVerified (fail-closed), so an unwired connector cannot pass.
   async verify(unit, ctx) {
     const reported = await this._verifyCategories(unit, ctx);
     const byName = {};
@@ -109,8 +156,43 @@ class BaseConnector extends Connector {
     return { ok, proof, categories };
   }
 
-  async _verifyCategories(_unit, _ctx) {
-    throw new Error(`${this.constructor.name}._verifyCategories() not implemented`);
+  // Default: drive the probe set. Returns one category per VERIFY_CATEGORIES, each
+  // resolved from its probe. A probe that throws (e.g. SDK not wired) fails closed.
+  async _verifyCategories(unit, ctx) {
+    const probes = this._probes(unit, ctx) || {};
+    const out = [];
+    for (const name of VERIFY_CATEGORIES) {
+      out.push(await this._runProbe(name, probes[name]));
+    }
+    return out;
+  }
+
+  async _runProbe(name, probe) {
+    if (typeof probe !== 'function') {
+      return category(name, false, 'not verified: no probe registered (fail-closed)');
+    }
+    try {
+      const r = await probe();
+      if (!r || typeof r.ok !== 'boolean') {
+        return category(name, false, 'not verified: probe returned no result (fail-closed)');
+      }
+      return category(name, r.ok, r.detail);
+    } catch (e) {
+      return category(name, false, `not verified: probe error (fail-closed): ${e.message}`);
+    }
+  }
+
+  // Subclasses MUST override _probes(); base throws so a half-built connector fails
+  // loudly rather than silently passing verification.
+  _probes(_unit, _ctx) {
+    throw new Error(`${this.constructor.name}._probes() not implemented`);
+  }
+
+  // ----- replication session bookkeeping (real, not faked) -------------------
+  _sessionFor(unit) {
+    const id = (unit && unit.id) || '_';
+    if (!this._session.has(id)) this._session.set(id, { started: false, measured: {} });
+    return this._session.get(id);
   }
 
   _execFor(unit) {
@@ -141,9 +223,12 @@ class ConnectorRegistry {
 module.exports = {
   BaseConnector,
   ConnectorRegistry,
+  MissingConfigError,
   EXECUTOR_STATES,
   EXECUTOR_TRANSITIONS,
   VERIFY_CATEGORIES,
   sha256,
   category,
+  verified,
+  notVerified,
 };
