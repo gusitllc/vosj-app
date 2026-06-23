@@ -33,14 +33,18 @@ metadata:
     app.kubernetes.io/name: seat-manager
     app.kubernetes.io/part-of: vosj-poc
 rules:
-  # Read seat state + write the per-seat credential Secret. No create/delete.
+  # Per-seat credential Secret: read + write (assign) + create/delete (scale).
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "patch"]
-  # Read seat readiness + bump the restart annotation. No create/delete.
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # Seat Deployment: read + restart (assign) + create/delete (scale).
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "patch"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  # Seat Service: create/delete on scale (read to check existence).
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -101,6 +105,28 @@ spec:
               value: "${NAMESPACE_DEV}"
             - name: SEAT_COUNT
               value: "${DEVSTATION_COUNT}"
+            - name: SEAT_MAX
+              value: "${SEAT_MAX}"
+            # Devstation spec params for provisioning new seats on scale-up
+            # (mirror config.env / devstation.yaml).
+            - name: DEVSTATION_IMAGE
+              value: "${DEVSTATION_IMAGE}"
+            - name: DEVSTATION_PORT
+              value: "${DEVSTATION_PORT}"
+            - name: ACR_PULL_SECRET
+              value: "${ACR_PULL_SECRET}"
+            - name: DEVSTATION_CPU_REQUEST
+              value: "${DEVSTATION_CPU_REQUEST}"
+            - name: DEVSTATION_CPU_LIMIT
+              value: "${DEVSTATION_CPU_LIMIT}"
+            - name: DEVSTATION_MEM_REQUEST
+              value: "${DEVSTATION_MEM_REQUEST}"
+            - name: DEVSTATION_MEM_LIMIT
+              value: "${DEVSTATION_MEM_LIMIT}"
+            - name: DEVSTATION_CLAUDE_MODEL
+              value: "${DEVSTATION_CLAUDE_MODEL}"
+            - name: DEVSTATION_CLAUDE_FALLBACK_MODEL
+              value: "${DEVSTATION_CLAUDE_FALLBACK_MODEL}"
             # Node's global fetch (undici) IGNORES a per-request https agent, so the
             # cluster's self-signed API CA must be trusted process-wide. Point Node
             # at the mounted ServiceAccount CA so the in-cluster k8s API calls verify.

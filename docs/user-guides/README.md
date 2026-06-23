@@ -15,6 +15,7 @@ below walk you through that discipline from a clean install to a verified Jump.
 | [01 — Getting Started](./01-getting-started.md) | Install (Node ≥ 20), configure `.env` (the two required fail-closed secrets), run `npm start`, check `/health`, and a full first end-to-end walkthrough: create a workload → classify (7-R) → create a wave from a template → sign the gates → reconcile → reach Jump. |
 | [06 — The Command Center](./06-command-center.md) | The built-in web UI (`/app.html`): the auth-token (Bearer) field, the live health strip, the Waves panel (phase + gate signing via `POST /api/waves/:id/transition`), the 7-R disposition board, and the ledger console with one-click chain-verify. |
 | [07 — Operations](./07-operations.md) | Running Vosj in production: the full `src/config.js` env reference, the tamper-evident ledger + chain verification & key custody, the RBAC capability model, advisory waivers (what can and cannot be waived), `/health` metrics, Postgres vs. in-memory, and backups. |
+| [08 — The POC Demo: Command Center, Seats & Devstations](./08-poc-demo-and-seats.md) | The live `vosj-poc` demo: the public URLs (`demo`/`seats`/`seat1-5.vosj.com`), how to log in to each surface, and how to assign a Claude credential to a devstation seat (Hybrid → OAuth key, AI-only → API key) with the **Seat Manager**. |
 
 > Additional guides (templates & frameworks, the 7-R disposition contracts,
 > connectors, and the reconciliation/equivalence proof) cross-link from here as

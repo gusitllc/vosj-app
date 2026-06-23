@@ -87,11 +87,19 @@ else
   "$SELF_DIR/00-provision-cluster.sh" --target "$TARGET"
 fi
 
-# --- stage 10: image ----------------------------------------------------------
+# --- stage 10: images ---------------------------------------------------------
+# Build ALL three POC images so a from-zero run needs nothing pre-built:
+#   - the Vosj app image (10-build-image.sh)
+#   - the lean devstation image  (devstation-image/build.sh -> vosj-devstation:poc)
+#   - the Seat Manager image     (seat-manager/build.sh     -> vosj-seat-manager:poc)
 if [ "$SKIP_BUILD" -eq 1 ]; then
-  log_warn "STAGE 10 skipped (--skip-build); reusing ${IMAGE_REPOSITORY}:${IMAGE_TAG}"
+  log_warn "STAGE 10 skipped (--skip-build); reusing existing images"
 else
   "$SELF_DIR/10-build-image.sh"
+  log_info "building lean devstation image (vosj-devstation:poc)"
+  bash "$SELF_DIR/devstation-image/build.sh"
+  log_info "building Seat Manager image (vosj-seat-manager:poc)"
+  bash "$SELF_DIR/seat-manager/build.sh"
 fi
 
 # --- stage 15: postgres (pg mode ONLY) ----------------------------------------

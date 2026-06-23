@@ -28,9 +28,22 @@ const crypto = require('crypto');
 // --- config (every tunable from env; zero hardcoded ids/paths) ---------------
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const NAMESPACE = process.env.DEVSTATIONS_NAMESPACE || 'devstations';
-const SEAT_COUNT = parseInt(process.env.SEAT_COUNT || '5', 10);
+const SEAT_DEFAULT = parseInt(process.env.SEAT_COUNT || '5', 10);
+const SEAT_MAX = parseInt(process.env.SEAT_MAX || '50', 10); // Community Edition cap
 const ADMIN_KEY = process.env.SEAT_MANAGER_ADMIN_KEY || '';
 const PUBLIC_DIR = path.join(__dirname, 'public');
+
+// Devstation spec parameters (for provisioning new seats on scale-up). Mirror
+// deploy/poc/devstation.yaml + config.env; supplied to the Seat Manager via env.
+const DEVSTATION_IMAGE = process.env.DEVSTATION_IMAGE || 'lucaexpressacr.azurecr.io/vosj-devstation:poc';
+const DEVSTATION_PORT = parseInt(process.env.DEVSTATION_PORT || '8080', 10);
+const ACR_PULL_SECRET = process.env.ACR_PULL_SECRET || 'vosj-acr-pull';
+const DS_CPU_REQUEST = process.env.DEVSTATION_CPU_REQUEST || '100m';
+const DS_CPU_LIMIT = process.env.DEVSTATION_CPU_LIMIT || '1';
+const DS_MEM_REQUEST = process.env.DEVSTATION_MEM_REQUEST || '300Mi';
+const DS_MEM_LIMIT = process.env.DEVSTATION_MEM_LIMIT || '1Gi';
+const DS_CLAUDE_MODEL = process.env.DEVSTATION_CLAUDE_MODEL || 'opus';
+const DS_CLAUDE_FALLBACK = process.env.DEVSTATION_CLAUDE_FALLBACK_MODEL || 'sonnet';
 
 // In-cluster ServiceAccount material (mounted by Kubernetes into every pod).
 const SA_DIR = '/var/run/secrets/kubernetes.io/serviceaccount';
@@ -73,6 +86,150 @@ const deployPath = (name) =>
 // --- base64 helpers for Secret .data (Secret values are base64-encoded) ------
 const b64enc = (s) => Buffer.from(String(s), 'utf8').toString('base64');
 const b64dec = (s) => Buffer.from(String(s || ''), 'base64').toString('utf8');
+
+// --- seat provisioning (scale up/down) ---------------------------------------
+// Scaling creates/deletes a devstation's Deployment + Service + per-seat Secret
+// via the k8s API. The specs MIRROR deploy/poc/devstation.yaml (lean code-server
+// image, port 8080, envFrom the -env Secret, ephemeral emptyDir, no SA token).
+const SEAT_SELECTOR = 'app.kubernetes.io/name=devstation';
+const secretsColl = `/api/v1/namespaces/${NAMESPACE}/secrets`;
+const servicesColl = `/api/v1/namespaces/${NAMESPACE}/services`;
+const deploysColl = `/apis/apps/v1/namespaces/${NAMESPACE}/deployments`;
+const servicePath = (name) => `${servicesColl}/${encodeURIComponent(name)}`;
+
+const seatName = (i) => `devstation-${i}`;
+const seatSecret = (i) => `devstation-${i}-env`;
+function seatLabels(i) {
+  return {
+    'app.kubernetes.io/name': 'devstation',
+    'app.kubernetes.io/instance': seatName(i),
+    'app.kubernetes.io/part-of': 'vosj-poc',
+  };
+}
+function genPassword() { return crypto.randomBytes(32).toString('hex'); }
+
+function seatSecretSpec(i) {
+  const pw = genPassword();
+  return {
+    apiVersion: 'v1', kind: 'Secret',
+    metadata: { name: seatSecret(i), namespace: NAMESPACE, labels: seatLabels(i) },
+    stringData: {
+      CODE_SERVER_PASSWORD: pw, PASSWORD: pw, DEVSTATION_NAME: seatName(i),
+      DEVSTATION_WORKER_ENABLED: 'false', VOSJ_SEAT_MODE: 'unassigned',
+      CLAUDE_MODEL: DS_CLAUDE_MODEL, CLAUDE_FALLBACK_MODEL: DS_CLAUDE_FALLBACK,
+      CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '',
+    },
+  };
+}
+
+function seatDeploymentSpec(i) {
+  const name = seatName(i);
+  return {
+    apiVersion: 'apps/v1', kind: 'Deployment',
+    metadata: { name, namespace: NAMESPACE, labels: { ...seatLabels(i), 'devstation/seat': name } },
+    spec: {
+      replicas: 1, strategy: { type: 'Recreate' },
+      selector: { matchLabels: { 'app.kubernetes.io/name': 'devstation', 'app.kubernetes.io/instance': name } },
+      template: {
+        metadata: { labels: seatLabels(i) },
+        spec: {
+          automountServiceAccountToken: false,
+          securityContext: { runAsNonRoot: false, seccompProfile: { type: 'RuntimeDefault' } },
+          imagePullSecrets: ACR_PULL_SECRET ? [{ name: ACR_PULL_SECRET }] : [],
+          containers: [{
+            name: 'code-server', image: DEVSTATION_IMAGE, imagePullPolicy: 'IfNotPresent',
+            args: ['--bind-addr', `0.0.0.0:${DEVSTATION_PORT}`, '/home/coder/project'],
+            envFrom: [{ secretRef: { name: seatSecret(i) } }],
+            ports: [{ name: 'http', containerPort: DEVSTATION_PORT }],
+            resources: {
+              requests: { cpu: DS_CPU_REQUEST, memory: DS_MEM_REQUEST },
+              limits: { cpu: DS_CPU_LIMIT, memory: DS_MEM_LIMIT },
+            },
+            readinessProbe: { httpGet: { path: '/healthz', port: 'http' }, initialDelaySeconds: 10, periodSeconds: 10, timeoutSeconds: 3, failureThreshold: 6 },
+            livenessProbe: { tcpSocket: { port: 'http' }, initialDelaySeconds: 30, periodSeconds: 20, timeoutSeconds: 5, failureThreshold: 3 },
+            volumeMounts: [
+              { name: 'project', mountPath: '/home/coder/project' },
+              { name: 'config', mountPath: '/home/coder/.config' },
+              { name: 'local', mountPath: '/home/coder/.local' },
+            ],
+          }],
+          volumes: [
+            { name: 'project', emptyDir: {} },
+            { name: 'config', emptyDir: {} },
+            { name: 'local', emptyDir: {} },
+          ],
+        },
+      },
+    },
+  };
+}
+
+function seatServiceSpec(i) {
+  const name = seatName(i);
+  return {
+    apiVersion: 'v1', kind: 'Service',
+    metadata: { name, namespace: NAMESPACE, labels: seatLabels(i) },
+    spec: {
+      type: 'ClusterIP',
+      selector: { 'app.kubernetes.io/name': 'devstation', 'app.kubernetes.io/instance': name },
+      ports: [{ name: 'http', port: 80, targetPort: 'http' }],
+    },
+  };
+}
+
+// Discover the actually-provisioned seat indices (sorted) from the cluster.
+async function listSeatIds() {
+  const r = await kube('GET', `${deploysColl}?labelSelector=${encodeURIComponent(SEAT_SELECTOR)}`);
+  const items = (r.json && r.json.items) || [];
+  return items
+    .map((d) => { const m = /^devstation-(\d+)$/.exec(d.metadata && d.metadata.name); return m ? parseInt(m[1], 10) : null; })
+    .filter((n) => n !== null)
+    .sort((a, b) => a - b);
+}
+
+const ok2xx = (s) => s >= 200 && s < 300;
+
+// Create a seat's Secret + Deployment + Service when absent (idempotent; 409 ok).
+async function ensureSeat(i) {
+  if ((await kube('GET', secretsPath(seatSecret(i)))).status === 404) {
+    const r = await kube('POST', secretsColl, seatSecretSpec(i));
+    if (!ok2xx(r.status) && r.status !== 409) throw httpError(502, `seat ${i} secret create failed (HTTP ${r.status})`);
+  }
+  if ((await kube('GET', deployPath(seatName(i)))).status === 404) {
+    const r = await kube('POST', deploysColl, seatDeploymentSpec(i));
+    if (!ok2xx(r.status) && r.status !== 409) throw httpError(502, `seat ${i} deployment create failed (HTTP ${r.status})`);
+  }
+  if ((await kube('GET', servicePath(seatName(i)))).status === 404) {
+    const r = await kube('POST', servicesColl, seatServiceSpec(i));
+    if (!ok2xx(r.status) && r.status !== 409) throw httpError(502, `seat ${i} service create failed (HTTP ${r.status})`);
+  }
+}
+
+// Delete a seat's Deployment + Service + Secret (404s are fine).
+async function removeSeat(i) {
+  await kube('DELETE', deployPath(seatName(i)));
+  await kube('DELETE', servicePath(seatName(i)));
+  await kube('DELETE', secretsPath(seatSecret(i)));
+}
+
+// Reconcile the provisioned seats to exactly `target` (1..SEAT_MAX): create any
+// missing 1..target, then delete any seat above the target.
+async function scaleSeats(target) {
+  const current = await listSeatIds();
+  const created = [];
+  const removed = [];
+  for (let i = 1; i <= target; i += 1) {
+    if (current.includes(i)) continue;
+    await ensureSeat(i);
+    created.push(i);
+  }
+  for (const i of current) {
+    if (i <= target) continue;
+    await removeSeat(i);
+    removed.push(i);
+  }
+  return { created, removed };
+}
 
 // --- seat state read ---------------------------------------------------------
 // Derive a seat's view from its Secret + Deployment. NEVER returns a credential —
@@ -183,7 +340,7 @@ function readBody(req) {
 }
 
 // --- static file serving (public/) ------------------------------------------
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
 
 function serveStatic(req, res) {
   let rel = req.url.split('?')[0];
@@ -200,13 +357,24 @@ function serveStatic(req, res) {
 
 // --- route handlers ----------------------------------------------------------
 async function handleListSeats(_req, res) {
-  const ids = Array.from({ length: SEAT_COUNT }, (_, i) => i + 1);
+  const ids = await listSeatIds();
   const seats = await Promise.all(ids.map(readSeat));
-  sendJson(res, 200, { ok: true, seats });
+  sendJson(res, 200, { ok: true, seats, count: ids.length, max: SEAT_MAX, default: SEAT_DEFAULT });
+}
+
+// POST /api/scale { count } — provision/de-provision seats to match (1..SEAT_MAX).
+async function handleScale(req, res) {
+  const raw = await readBody(req);
+  let body;
+  try { body = raw ? JSON.parse(raw) : {}; } catch (_) { throw httpError(400, 'invalid JSON body'); }
+  const target = parseInt(body.count, 10);
+  if (!(target >= 1 && target <= SEAT_MAX)) throw httpError(400, `count must be between 1 and ${SEAT_MAX}`);
+  const { created, removed } = await scaleSeats(target);
+  sendJson(res, 200, { ok: true, count: target, max: SEAT_MAX, created, removed });
 }
 
 function validateAssign(id, body) {
-  if (!(id >= 1 && id <= SEAT_COUNT)) throw httpError(400, `invalid seat id (1..${SEAT_COUNT})`);
+  if (!(id >= 1 && id <= SEAT_MAX)) throw httpError(400, `invalid seat id (1..${SEAT_MAX})`);
   const mode = body && body.mode;
   if (mode !== 'hybrid' && mode !== 'ai-only') throw httpError(400, 'mode must be hybrid or ai-only');
   const credential = body && typeof body.credential === 'string' ? body.credential.trim() : '';
@@ -235,6 +403,7 @@ async function route(req, res) {
     if (!auth.ok) { sendJson(res, auth.status, { ok: false, error: auth.error }); return; }
 
     if (req.method === 'GET' && url === '/api/seats') { await handleListSeats(req, res); return; }
+    if (req.method === 'POST' && url === '/api/scale') { await handleScale(req, res); return; }
     const m = url.match(/^\/api\/seats\/(\d+)\/assign$/);
     if (req.method === 'POST' && m) { await handleAssign(req, res, parseInt(m[1], 10)); return; }
     sendJson(res, 404, { ok: false, error: 'no such route' });

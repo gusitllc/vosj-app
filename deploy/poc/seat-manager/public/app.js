@@ -126,10 +126,44 @@ async function loadSeats() {
     host.innerHTML = '<div class="err-banner">' + esc(r.error || 'failed to load seats') + '</div>';
     return;
   }
+  updateScaleBar(r);
   const seats = Array.isArray(r.seats) ? r.seats : [];
-  if (!seats.length) { host.innerHTML = '<div class="empty">No seats reported.</div>'; return; }
+  if (!seats.length) { host.innerHTML = '<div class="empty">No seats yet — set a count above and Apply.</div>'; return; }
   host.innerHTML = seats.map(seatCard).join('');
   bindCards();
+}
+
+// --- scaling (provision/de-provision seats, 1..max) ---
+let lastSeatCount = 0;
+function updateScaleBar(r) {
+  const count = typeof r.count === 'number' ? r.count : (Array.isArray(r.seats) ? r.seats.length : 0);
+  const max = r.max || 50;
+  lastSeatCount = count;
+  const inp = $('scaleCount');
+  if (inp) { inp.max = String(max); if (document.activeElement !== inp) inp.value = String(count); }
+  const lbl = $('seatCount');
+  if (lbl) lbl.textContent = count + ' of ' + max + ' seats provisioned';
+}
+
+async function onScaleApply() {
+  if (!getKey()) { toast('Enter your admin key first', 'error'); return; }
+  const target = parseInt(($('scaleCount').value || '').trim(), 10);
+  const max = parseInt($('scaleCount').max || '50', 10);
+  if (!(target >= 1 && target <= max)) { toast('Seats must be between 1 and ' + max, 'error'); return; }
+  if (target < lastSeatCount) {
+    const msg = 'Scale down to ' + target + ' seats? Seats ' + (target + 1) + '–' + lastSeatCount
+      + ' will be removed (along with any credential assigned to them).';
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(msg)) return;
+  }
+  const btn = $('scaleApply');
+  btn.disabled = true;
+  toast('Scaling to ' + target + ' seats…', 'ok');
+  const r = await api('POST', '/api/scale', { count: target });
+  btn.disabled = false;
+  if (!r.ok) { toast('Scale failed: ' + (r.error || 'error'), 'error'); return; }
+  toast('Now ' + r.count + ' seats (+' + (r.created || []).length + ' / -' + (r.removed || []).length + ')', 'ok');
+  await loadSeats();
 }
 
 // --- interactions ---
@@ -170,12 +204,24 @@ async function onAssign(ev) {
 }
 
 // --- wiring ---
+// Pre-auth gate: proceed from the minimal landing into the seat list.
+function onGateGo() {
+  $('adminKey').value = ($('gateKey').value || '').trim();
+  saveKey();
+  document.body.classList.remove('locked');
+  loadSeats();
+}
+
 function init() {
   loadKey();
   $('saveKey').addEventListener('click', () => { saveKey(); loadSeats(); });
   $('refresh').addEventListener('click', loadSeats);
   $('adminKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadSeats(); });
-  if (getKey()) loadSeats();
+  $('gateGo').addEventListener('click', onGateGo);
+  $('gateKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') onGateGo(); });
+  $('scaleApply').addEventListener('click', onScaleApply);
+  // Already have a key? Unlock straight to the seats; else show the gate.
+  if (getKey()) { document.body.classList.remove('locked'); loadSeats(); }
 }
 
 document.addEventListener('DOMContentLoaded', init);

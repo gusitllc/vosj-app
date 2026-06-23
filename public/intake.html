@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<!-- public/intake.html — Vosj Intake — "Plot the Voyage".
+     A guided, 6-step wizard that takes ONE application into Vosj end to end:
+       1. Identify the application   (→ POST /api/workloads id/name)
+       2. Business criticality       (metadata captured FIRST per CAF/Strategy)
+       3. Migration shape            (the 8 decision toggles → classify heuristic)
+       4. Confirm the strategy       (GET /api/classify/:id → 7-R disposition)
+       5. Baseline & verification     (baselineAt + reconciliation readiness)
+       6. Wave assignment + review   (GET/POST /api/waves, then upsert workload)
+     Progressive disclosure: only the current step is shown; the draft is saved to
+     localStorage on every step change (save-and-resume) and cleared on submit.
+     Vanilla JS + fetch + DOM only — no framework, no CDN. Every server/user value
+     is escaped (esc()) before it reaches the DOM (XSS). Reuses the proven app.js
+     primitives ($, esc, toast, token, api/apiGet/apiPost) verbatim. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vosj Intake — Plot the Voyage</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Pre-auth gate (copied from index.html): until a token is entered, show ONLY a
+       brief intro + the token field — the wizard stays hidden behind body.locked. */
+    #gate { display: none; }
+    body.locked { overflow: hidden; }
+    body.locked > header,
+    body.locked > main,
+    body.locked > footer { display: none !important; }
+    body.locked #gate {
+      display: flex; position: fixed; inset: 0; z-index: 50; padding: 24px;
+      align-items: center; justify-content: center; background: var(--navy, #0E2235);
+    }
+    .gate-card {
+      max-width: 460px; text-align: center; background: var(--navy-2, #14304a);
+      border: 1px solid var(--line, #1b3b59); border-radius: 12px; padding: 32px 28px;
+    }
+    .gate-card .letters { font-size: 22px; letter-spacing: 2px; color: var(--teal-2, #14b3ac); font-weight: 700; }
+    .gate-card h1 { margin: 10px 0 6px; font-size: 20px; color: var(--ink, #e8eef3); }
+    .gate-card p { margin: 0; color: var(--muted, #9fb3c8); font-size: 14px; line-height: 1.55; }
+    .gate-row { display: flex; gap: 8px; margin: 18px 0 8px; }
+    .gate-row input { flex: 1; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line, #1b3b59); background: var(--navy, #0E2235); color: var(--ink, #e8eef3); }
+    .gate-row button { padding: 10px 18px; border-radius: 6px; border: 0; background: var(--teal, #14b3ac); color: #04221f; font-weight: 700; cursor: pointer; }
+    .gate-hint { font-size: 12px; color: var(--muted, #9fb3c8); }
+
+    /* ---- wizard-specific bits only (everything else reuses styles.css) ---- */
+    .wiz { max-width: 820px; margin: 0 auto; }
+
+    /* horizontal step indicator — completed steps are clickable */
+    .stepbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 18px; padding: 0; list-style: none; }
+    .stepbar li {
+      flex: 1 1 0; min-width: 84px; text-align: center; font-size: 11px; font-weight: 600;
+      color: var(--muted); border-top: 3px solid var(--line); padding: 8px 4px 0; cursor: default;
+    }
+    .stepbar li .n {
+      display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+      border-radius: 50%; background: var(--chip); color: var(--muted); font-weight: 700; margin-bottom: 4px;
+    }
+    .stepbar li.done { color: var(--ink); border-top-color: var(--teal); cursor: pointer; }
+    .stepbar li.done .n { background: rgba(15, 139, 134, 0.3); color: var(--teal-2); }
+    .stepbar li.active { color: var(--ink); border-top-color: var(--teal-2); }
+    .stepbar li.active .n { background: var(--teal); color: #06201f; }
+    .stepbar li.done:hover { color: var(--teal-2); }
+
+    /* progressive disclosure: only the active step section is shown */
+    .step { display: none; }
+    .step.active { display: block; }
+    .step h1 { font-size: 18px; margin: 0 0 4px; }
+    .step h1:focus { outline: none; }
+    .step .lead { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+
+    /* a vertical stack of labelled fields (the wizard prefers full-width inputs) */
+    .stack { display: flex; flex-direction: column; gap: 14px; }
+    .stack .field { width: 100%; }
+    .stack .field input, .stack .field select, .stack .field textarea { width: 100%; }
+    .fhint { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .ferr { color: var(--bad); font-size: 12px; margin-top: 2px; min-height: 0; }
+
+    /* the slugified workload-id field reads read-only until 'edit' is clicked */
+    .idbox { display: flex; gap: 8px; align-items: center; }
+    .idbox input { flex: 1; font-family: var(--mono); }
+    .idbox input.ro { background: var(--navy-3); color: var(--muted); }
+
+    /* radio / segmented groups */
+    .opts { display: flex; gap: 8px; flex-wrap: wrap; }
+    .opts label {
+      display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+      border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 13px;
+      background: var(--navy-3); text-transform: none; letter-spacing: 0; color: var(--ink);
+    }
+    .opts label.sel { border-color: var(--teal); background: rgba(15, 139, 134, 0.18); }
+    .opts label small { display: block; color: var(--muted); font-size: 11px; }
+    .opts input { width: auto; }
+
+    /* the 8 yes/no toggle rows in step 3 */
+    .toggles { display: flex; flex-direction: column; gap: 8px; }
+    .toggle {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--navy-3);
+    }
+    .toggle.off { opacity: 0.45; }
+    .toggle .tlabel { font-weight: 600; }
+    .toggle .texample { color: var(--muted); font-size: 12px; font-weight: 400; }
+    .toggle .yn { display: inline-flex; gap: 4px; }
+    .toggle .yn button {
+      background: var(--chip); color: var(--muted); border: 1px solid var(--line);
+      padding: 4px 12px; font-size: 12px; font-weight: 700;
+    }
+    .toggle .yn button.on-yes { background: var(--teal); color: #06201f; border-color: var(--teal); }
+    .toggle .yn button.on-no { background: rgba(224, 91, 91, 0.18); color: var(--bad); border-color: var(--bad); }
+
+    /* step 4 verdict card + 7-R override picker */
+    .verdict { border: 1px solid var(--teal); border-radius: 10px; padding: 16px; background: rgba(15, 139, 134, 0.1); margin-bottom: 14px; }
+    .verdict.high { border-color: var(--warn); background: rgba(224, 169, 59, 0.08); }
+    .verdict .vtitle { font-size: 16px; font-weight: 800; }
+    .verdict .vmeaning { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .verdict .vtags { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .vwarn { border-left: 3px solid var(--warn); padding: 8px 10px; margin-top: 10px; font-size: 12px; color: var(--warn); background: rgba(224, 169, 59, 0.08); border-radius: 4px; }
+    .dispgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+    .dispgrid .disp {
+      border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--navy-3); cursor: pointer;
+    }
+    .dispgrid .disp.sel { border-color: var(--teal); background: rgba(15, 139, 134, 0.18); }
+    .dispgrid .disp.high { border-left: 3px solid var(--warn); }
+    .dispgrid .dname { font-weight: 700; }
+    .dispgrid .dmeaning { color: var(--muted); font-size: 11px; margin-top: 3px; }
+
+    /* read-only reconciliation checklist (step 5) */
+    .checklist { list-style: none; padding: 0; margin: 8px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
+    .checklist li { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font-size: 12px; background: var(--navy-3); }
+    .checklist li::before { content: '\2713'; color: var(--teal-2); font-weight: 800; margin-right: 6px; }
+
+    /* grouped review summary (step 6) */
+    .summary { display: flex; flex-direction: column; gap: 10px; }
+    .summary .sgroup { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; background: var(--navy-3); }
+    .summary .shead { display: flex; justify-content: space-between; align-items: baseline; }
+    .summary .shead b { font-size: 13px; }
+    .summary .sedit { font-size: 12px; color: var(--teal-2); cursor: pointer; background: none; border: 0; padding: 0; }
+    .summary dl { margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 12px; }
+    .summary dt { color: var(--muted); }
+    .summary dd { margin: 0; word-break: break-word; }
+
+    /* footer nav */
+    .wiznav { display: flex; justify-content: space-between; gap: 10px; margin-top: 22px; }
+    .wiznav .right { display: flex; gap: 8px; }
+
+    .advtoggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
+    .advtoggle input { width: auto; }
+    .advanced { display: none; }
+    body.show-advanced .advanced { display: block; }
+  </style>
+</head>
+<body class="locked">
+  <!-- pre-auth gate (shown until a token is entered; hidden once authed) -->
+  <section id="gate">
+    <div class="gate-card">
+      <div class="letters">V·O·S·J</div>
+      <h1>Plot a Voyage</h1>
+      <p>Guided intake — take an application into Vosj step by step. Enter your access
+        token to continue.</p>
+      <div class="gate-row">
+        <input id="gateToken" type="password" placeholder="Access token (Bearer)" autocomplete="off" />
+        <button id="gateGo" type="button">Continue</button>
+      </div>
+      <p class="gate-hint">Your token is stored only in this browser.</p>
+    </div>
+  </section>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
+      <div class="sub">Intake — Plot the Voyage</div>
+    </div>
+    <div class="spacer"></div>
+    <a href="app.html" class="ghost" style="text-decoration:none;display:inline-flex;align-items:center;padding:7px 12px;border-radius:6px;border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:13px">Command Center &rarr;</a>
+    <label class="advtoggle"><input id="advToggle" type="checkbox" /> Show advanced</label>
+    <!-- token input mirrored to localStorage (same id contract as app.js) -->
+    <div class="token-box">
+      <label for="token" style="color:var(--muted);font-size:12px">Bearer</label>
+      <input id="token" type="password" placeholder="AUTH_TOKEN" autocomplete="off" />
+      <button class="ghost" id="saveToken">Save</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="wiz">
+      <!-- horizontal step indicator (built by intake.js) -->
+      <ol class="stepbar" id="stepbar"></ol>
+
+      <section class="card">
+        <!-- ===== STEP 1 — Identify the application ===== -->
+        <div class="step" data-step="0">
+          <h1 tabindex="-1">Step 1 of 6: Identify the application</h1>
+          <p class="lead">Name the application you want to migrate. Vosj derives a stable
+            machine key (the Workload ID) from the name — you can edit it.</p>
+          <div class="stack">
+            <div class="field">
+              <label>Display name</label>
+              <input id="s1Name" placeholder="Billing service" autocomplete="off" />
+              <div class="ferr" id="s1NameErr"></div>
+            </div>
+            <div class="field">
+              <label>Workload ID (machine key)</label>
+              <div class="idbox">
+                <input id="s1Id" class="ro" readonly placeholder="billing-service" autocomplete="off" />
+                <button class="ghost small" id="s1IdEdit" type="button">edit</button>
+              </div>
+              <div class="fhint">Lowercase letters, digits and hyphens; 2&ndash;64 chars. Used as the workload's permanent id.</div>
+              <div class="ferr" id="s1IdErr"></div>
+            </div>
+            <div class="field">
+              <label>Description / owner note</label>
+              <textarea id="s1Desc" placeholder="What it does, who owns it, anything a migration lead should know."></textarea>
+            </div>
+            <div class="field">
+              <label>Who uses it?</label>
+              <div class="opts" id="s1Facing"></div>
+            </div>
+            <div class="field">
+              <label>Does it generate revenue?</label>
+              <div class="opts" id="s1Revenue"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== STEP 2 — Business criticality ===== -->
+        <div class="step" data-step="1">
+          <h1 tabindex="-1">Step 2 of 6: Business criticality</h1>
+          <p class="lead">Every migration framework asks this first. It shapes how cautious
+            the plan is — it does not gate anything here.</p>
+          <div class="stack">
+            <div class="field">
+              <label>Criticality tier</label>
+              <div class="opts" id="s2Tier"></div>
+            </div>
+            <div class="field">
+              <label>Business role</label>
+              <div class="opts" id="s2Role"></div>
+            </div>
+            <div class="field advanced">
+              <label>Peak concurrent users</label>
+              <input id="s2Users" type="number" min="0" step="1" placeholder="0" />
+              <div class="ferr" id="s2UsersErr"></div>
+            </div>
+            <div class="field advanced">
+              <label>Operating timezone</label>
+              <input id="s2Tz" placeholder="UTC" autocomplete="off" />
+              <div class="fhint">Defaults to this browser's timezone.</div>
+            </div>
+            <div class="field advanced">
+              <label>Change-freeze periods</label>
+              <textarea id="s2Freeze" placeholder="e.g. December (holiday freeze), quarter-end week."></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== STEP 3 — Migration shape (decision toggles) ===== -->
+        <div class="step" data-step="2">
+          <h1 tabindex="-1">Step 3 of 6: Migration shape</h1>
+          <p class="lead">Answer the questions that apply. They are weighed in priority order
+            to recommend a strategy on the next step. Leaving them all "No" suggests a plain
+            lift-and-shift (Rehost).</p>
+          <div class="toggles" id="s3Toggles"></div>
+          <div class="field advanced" style="margin-top:14px">
+            <label>Approximate row count (largest datastore)</label>
+            <input id="s3Rows" type="number" min="0" step="1" placeholder="0" />
+            <div class="fhint">Metadata only — helps size the reconciliation effort.</div>
+            <div class="ferr" id="s3RowsErr"></div>
+          </div>
+          <div class="field advanced" style="margin-top:14px">
+            <label class="advtoggle"><input id="s3Escape" type="checkbox" /> I already know the strategy &mdash; let me pick it directly</label>
+            <div id="s3EscapeBox" style="display:none;margin-top:8px">
+              <div class="opts" id="s3Disp"></div>
+              <div class="fhint">Picking here bypasses the recommendation heuristic.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== STEP 4 — Confirm the strategy ===== -->
+        <div class="step" data-step="3">
+          <h1 tabindex="-1">Step 4 of 6: Confirm the strategy</h1>
+          <p class="lead">Vosj classified this application against the 7-R model. Accept the
+            recommendation, or override it.</p>
+          <div id="s4Verdict"><div class="empty">Classifying&hellip;</div></div>
+          <p class="hint" style="margin:16px 0 6px">Override the disposition (advanced):</p>
+          <div class="dispgrid" id="s4Picker"></div>
+        </div>
+
+        <!-- ===== STEP 5 — Baseline & verification readiness ===== -->
+        <div class="step" data-step="4">
+          <h1 tabindex="-1">Step 5 of 6: Baseline &amp; verification</h1>
+          <p class="lead">Vosj never cuts an application over without a fresh baseline and a
+            passing reconciliation proof signed by a human DBA.</p>
+          <div class="stack">
+            <div class="field">
+              <label>Baseline captured at</label>
+              <input id="s5Baseline" type="datetime-local" />
+              <div class="fhint">Must be &lt;24h old at cutover or reconciliation fails closed.</div>
+            </div>
+            <div class="field">
+              <label>Reconciliation connector</label>
+              <select id="s5Conn"><option value="demo">demo</option></select>
+              <div class="fhint">The Community Edition ships the <b>demo</b> connector.</div>
+            </div>
+            <div class="field advanced">
+              <label>RPO target (recovery point objective)</label>
+              <input id="s5Rpo" placeholder="e.g. 5 minutes" autocomplete="off" />
+            </div>
+            <div class="field advanced">
+              <label>RTO target (recovery time objective)</label>
+              <input id="s5Rto" placeholder="e.g. 1 hour" autocomplete="off" />
+            </div>
+          </div>
+          <p class="hint" style="margin:16px 0 4px">Vosj will require ALL of these to pass
+            (with a human DBA signature) before any go-live &mdash; this gate cannot be removed.</p>
+          <ul class="checklist" id="s5Checklist"></ul>
+        </div>
+
+        <!-- ===== STEP 6 — Wave assignment + review & submit ===== -->
+        <div class="step" data-step="5">
+          <h1 tabindex="-1">Step 6 of 6: Wave assignment &amp; review</h1>
+          <p class="lead">Assign this application to a migration wave &mdash; the governed
+            P1&rarr;P7 journey &mdash; then review and submit.</p>
+          <div class="stack">
+            <div class="field">
+              <label>Wave</label>
+              <div class="opts" id="s6Mode"></div>
+            </div>
+            <div class="field" id="s6ExistingBox" style="display:none">
+              <label>Choose an existing wave</label>
+              <select id="s6Wave"></select>
+            </div>
+            <div id="s6NewBox" style="display:none">
+              <div class="stack">
+                <div class="field">
+                  <label>New wave ID</label>
+                  <input id="s6WaveId" placeholder="wave-1" autocomplete="off" />
+                  <div class="ferr" id="s6WaveIdErr"></div>
+                </div>
+                <div class="field">
+                  <label>New wave name</label>
+                  <input id="s6WaveName" placeholder="Pilot wave" autocomplete="off" />
+                  <div class="ferr" id="s6WaveNameErr"></div>
+                </div>
+                <div class="fhint">A wave is the governed P1&rarr;P7 journey; new waves start at P1 Envision. Template: <b>caf</b>.</div>
+              </div>
+            </div>
+          </div>
+          <p class="hint" style="margin:18px 0 6px">Review</p>
+          <div class="summary" id="s6Summary"></div>
+        </div>
+
+        <!-- nav -->
+        <div class="wiznav">
+          <button class="ghost" id="wizBack" type="button">&larr; Back</button>
+          <div class="right">
+            <button id="wizNext" type="button">Next &rarr;</button>
+            <button id="wizSubmit" type="button" style="display:none">Submit &amp; create</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>Vosj Community Edition &mdash; self-hosted, bring-your-own-AI migration engine. The execution moat is Enterprise.</footer>
+  <div id="toast"></div>
+
+  <script src="intake.js"></script>
+</body>
+</html>

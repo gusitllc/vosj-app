@@ -469,6 +469,14 @@ async function refreshAll() {
   await renderWaveDetailAndGate();
 }
 
+// Pre-auth gate: proceed from the minimal landing into the full workstation.
+function onGateGo() {
+  $('token').value = ($('gateToken').value || '').trim();
+  saveToken();
+  document.body.classList.remove('locked');
+  refreshAll();
+}
+
 function init() {
   loadToken();
   $('saveToken').addEventListener('click', saveToken);
@@ -478,7 +486,10 @@ function init() {
   $('runReconcile').addEventListener('click', onReconcile);
   $('verifyChain').addEventListener('click', verifyChain);
   $('refreshLedger').addEventListener('click', loadLedger);
-  refreshAll();
+  $('gateGo').addEventListener('click', onGateGo);
+  $('gateToken').addEventListener('keydown', (e) => { if (e.key === 'Enter') onGateGo(); });
+  // Already have a token? Unlock straight to the workstation; else show the gate.
+  if (getToken()) { document.body.classList.remove('locked'); refreshAll(); }
 }
 
 document.addEventListener('DOMContentLoaded', init);
