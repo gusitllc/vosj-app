@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!-- public/index.html — Vosj POC Seat Manager.
+     Credential-assignment console for the devstation seats. An admin picks a MODE
+     per seat (Hybrid = code-server + Claude Code via Max OAuth, or AI-only =
+     headless Claude), pastes the matching key, and Assigns — which writes that
+     seat's Secret and restarts the Deployment. Vanilla JS, no framework, no CDN.
+     Every server-supplied value is esc()'d before it reaches the DOM (XSS). -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vosj — Seat Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
+      <div class="sub">Seat Manager — devstation credentials</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="key-box">
+      <label for="adminKey">Admin key</label>
+      <input id="adminKey" type="password" placeholder="X-Admin-Key" autocomplete="off" />
+      <button class="ghost" id="saveKey">Save</button>
+      <button class="ghost" id="refresh">Refresh</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="intro">
+      <h1>Devstation seats</h1>
+      <p class="hint">
+        Each seat is a Deployment <code>devstation-&lt;i&gt;</code> fed by a per-seat
+        Secret <code>devstation-&lt;i&gt;-env</code>. Choose a mode, paste the matching
+        credential, and <b>Assign</b> — the Secret is written and the seat is restarted.
+        Keys are never echoed back; only the last 4 characters are shown as a hint.
+      </p>
+    </section>
+
+    <div id="seats" class="seat-grid">
+      <div class="empty">Enter your admin key, then Refresh to load seats.</div>
+    </div>
+  </main>
+
+  <footer>Vosj POC — Seat Manager. Hybrid = code-server + Claude Code (Max OAuth). AI-only = headless Claude (API key).</footer>
+  <div id="toast"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

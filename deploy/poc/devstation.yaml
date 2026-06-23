@@ -1,19 +1,27 @@
 # =============================================================================
-# devstation.yaml — parameterized devstation (code-server + Claude dev seat).
+# devstation.yaml — parameterized POC devstation seat (lean look-alike image).
+#
+# Uses the lean vosj-devstation image (codercom/code-server + Claude Code CLI;
+# built from deploy/poc/devstation-image/). Functionally "similar to the
+# devstations we have now": a code-server IDE + `claude` on PATH, password login,
+# and the SAME credential model as the fleet — every var arrives via envFrom the
+# per-seat Secret `${DEVSTATION_SECRET}` (devstation-<i>-env):
+#   PASSWORD                 -> code-server login (set = CODE_SERVER_PASSWORD)
+#   CLAUDE_CODE_OAUTH_TOKEN  -> Hybrid mode (interactive Claude Code, Max OAuth)
+#   ANTHROPIC_API_KEY        -> AI-only mode (headless Claude, API key)
+# A fresh seat is "empty" (no credential, worker off); the Seat Manager website
+# writes the credential into this Secret and restarts the seat.
 #
 # Rendered per-seat by 30-deploy-devstations.sh via `envsubst`. Substituted vars:
-#   ${DEVSTATION_NAME}      e.g. devstation-1
-#   ${NAMESPACE_DEV}        target namespace
-#   ${DEVSTATION_IMAGE}     code-server image (configurable)
-#   ${DEVSTATION_PORT}      container port
-#   ${DEVSTATION_SECRET}    per-seat Secret name (CODE_SERVER_PASSWORD + token)
+#   ${DEVSTATION_NAME} ${NAMESPACE_DEV} ${DEVSTATION_IMAGE} ${DEVSTATION_SECRET}
+#   ${DEVSTATION_PORT} ${ACR_PULL_SECRET}
 #   ${DEVSTATION_CPU_REQUEST} ${DEVSTATION_CPU_LIMIT}
 #   ${DEVSTATION_MEM_REQUEST} ${DEVSTATION_MEM_LIMIT}
 #
 # HARD PLATFORM RULE: EPHEMERAL — NO per-pod PVC. The cluster CSI cannot absorb
 # many simultaneous volume attaches; per-pod PVCs across a fleet wedged the disk
-# CSI once already. All writable paths are emptyDir. Retention (if ever needed)
-# is via a DB harvest, NEVER per-pod volumes.
+# CSI once already. All writable paths are emptyDir. Retention (if ever needed) is
+# via a DB harvest, NEVER per-pod volumes.
 # =============================================================================
 apiVersion: apps/v1
 kind: Deployment
@@ -27,8 +35,8 @@ metadata:
     devstation/seat: "${DEVSTATION_NAME}"
 spec:
   replicas: 1
-  # Recreate (not RollingUpdate): a devstation is a single ephemeral seat; we do
-  # not want two pods fighting over the same emptyDir-backed identity.
+  # Recreate (not RollingUpdate): a seat is a single ephemeral identity; we do not
+  # want two pods fighting over the same emptyDir-backed workspace.
   strategy:
     type: Recreate
   selector:
@@ -42,39 +50,30 @@ spec:
         app.kubernetes.io/instance: ${DEVSTATION_NAME}
         app.kubernetes.io/part-of: vosj-poc
     spec:
+      # A devstation seat has no business calling the Kubernetes API — drop the token.
+      automountServiceAccountToken: false
       securityContext:
-        runAsNonRoot: false   # code-server image manages its own non-root user
+        runAsNonRoot: false   # the code-server image manages its own 'coder' user
         seccompProfile:
           type: RuntimeDefault
+      imagePullSecrets:
+        - name: ${ACR_PULL_SECRET}
       containers:
         - name: code-server
           image: ${DEVSTATION_IMAGE}
           imagePullPolicy: IfNotPresent
+          # code-server's upstream entrypoint takes these as code-server args.
           args:
             - "--bind-addr"
             - "0.0.0.0:${DEVSTATION_PORT}"
             - "/home/coder/project"
+          # All config (PASSWORD + the assigned credential) comes from the -env Secret.
+          envFrom:
+            - secretRef:
+                name: ${DEVSTATION_SECRET}
           ports:
             - name: http
               containerPort: ${DEVSTATION_PORT}
-          env:
-            # code-server reads PASSWORD for its login gate.
-            - name: PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: ${DEVSTATION_SECRET}
-                  key: CODE_SERVER_PASSWORD
-            # Claude Code reads CLAUDE_CODE_OAUTH_TOKEN (the platform's confirmed
-            # var name — the CLI does NOT read CLAUDE_TOKEN). Optional: the key
-            # may be empty if no seat token was provisioned.
-            - name: CLAUDE_CODE_OAUTH_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: ${DEVSTATION_SECRET}
-                  key: CLAUDE_CODE_OAUTH_TOKEN
-                  optional: true
-            - name: DEVSTATION_NAME
-              value: "${DEVSTATION_NAME}"
           resources:
             requests:
               cpu: "${DEVSTATION_CPU_REQUEST}"
@@ -89,11 +88,11 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 3
-            failureThreshold: 3
+            failureThreshold: 6
           livenessProbe:
             tcpSocket:
               port: http
-            initialDelaySeconds: 20
+            initialDelaySeconds: 30
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3

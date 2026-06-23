@@ -1,0 +1,194 @@
+/* public/styles.css — Vosj POC Seat Manager theme.
+ * Dark navy/teal aesthetic, matching the Vosj Command Center palette.
+ * Vanilla CSS, no framework, no CDN. Responsive (single column on mobile). */
+
+:root {
+  --navy: #0E2235;
+  --navy-2: #14304a;
+  --teal: #14b3ac;
+  --ink: #e8eef3;
+  --muted: #9fb2c4;
+  --line: #1b3b59;
+  --bad: #e5534b;
+  --ok: #2ea043;
+  --warn: #d29922;
+  --chip: #1d3650;
+  --radius: 10px;
+  --gap: 16px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  background: linear-gradient(180deg, var(--navy) 0%, #0a1a28 100%);
+  color: var(--ink);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+code { font-family: var(--mono); color: var(--teal); }
+
+/* ---- header ---- */
+header.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 12px 20px;
+  background: rgba(7, 20, 32, 0.85);
+  border-bottom: 1px solid var(--line);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  flex-wrap: wrap;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand .letters { font-weight: 800; letter-spacing: 2px; font-size: 22px; }
+.brand .letters span { color: var(--teal); }
+.brand .sub { color: var(--muted); font-size: 12px; }
+.topbar .spacer { flex: 1; }
+
+.key-box { display: flex; align-items: center; gap: 6px; }
+.key-box label { color: var(--muted); font-size: 12px; }
+.key-box input {
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-width: 200px;
+}
+
+/* ---- buttons ---- */
+button {
+  background: var(--teal);
+  color: #04161a;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+button:hover { filter: brightness(1.08); }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+button.ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ---- layout ---- */
+main { max-width: 1100px; margin: 0 auto; padding: 20px; }
+.intro h1 { margin: 4px 0 6px; font-size: 20px; }
+.hint { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.hint.small { font-size: 12px; margin: 4px 0; }
+
+.seat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--gap);
+  margin-top: 8px;
+}
+
+/* ---- seat card ---- */
+.seat-card {
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.seat-head { display: flex; align-items: center; justify-content: space-between; }
+.seat-id { font-weight: 700; font-size: 15px; }
+.seat-status { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.field-label { color: var(--muted); font-size: 12px; margin-top: 4px; }
+input.cred {
+  background: var(--navy);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 8px 10px;
+  width: 100%;
+}
+button.assign { margin-top: 4px; }
+
+/* ---- mode toggle ---- */
+.mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  align-self: flex-start;
+}
+.mode-btn {
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-radius: 0;
+  padding: 6px 12px;
+  font-weight: 600;
+}
+.mode-btn.active { background: var(--teal); color: #04161a; }
+
+/* ---- chips ---- */
+.chip {
+  display: inline-block;
+  background: var(--chip);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.chip.teal { background: rgba(20, 179, 172, 0.18); color: var(--teal); }
+.chip.ok   { background: rgba(46, 160, 67, 0.18); color: var(--ok); }
+.chip.bad  { background: rgba(229, 83, 75, 0.18); color: var(--bad); }
+.chip.warn { background: rgba(210, 153, 34, 0.18); color: var(--warn); }
+
+/* ---- states ---- */
+.empty { color: var(--muted); padding: 18px; text-align: center; }
+.err-banner {
+  background: rgba(229, 83, 75, 0.12);
+  border: 1px solid var(--bad);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+footer {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px 20px 32px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---- toast ---- */
+#toast { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }
+.toast {
+  background: var(--navy-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
+}
+.toast.ok    { border-color: var(--ok); }
+.toast.error { border-color: var(--bad); }
+
+/* ---- responsive ---- */
+@media (max-width: 768px) {
+  header.topbar { gap: 8px; }
+  .key-box input { min-width: 0; flex: 1; }
+  .seat-grid { grid-template-columns: 1fr; }
+  main { padding: 14px; }
+}

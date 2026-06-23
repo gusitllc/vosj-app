@@ -1,0 +1,14 @@
+{
+  "name": "vosj-seat-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vosj POC Seat Manager — credential-assignment console for devstation seats. Zero runtime deps (raw http + global fetch + in-cluster ServiceAccount).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

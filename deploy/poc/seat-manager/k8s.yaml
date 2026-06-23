@@ -1,0 +1,162 @@
+# =============================================================================
+# seat-manager/k8s.yaml — the Seat Manager console + its least-privilege RBAC.
+#
+# Rendered by 50-deploy-seat-manager.sh via `envsubst`. Substituted vars:
+#   ${NAMESPACE_DEV}        namespace that holds the devstation seats + this app
+#   ${SEAT_MANAGER_IMAGE}   the built image reference
+#   ${ACR_PULL_SECRET}      docker-registry pull Secret name (may be empty)
+#   ${DEVSTATION_COUNT}     seat count exposed to the backend (SEAT_COUNT)
+#
+# RBAC is NAMESPACE-SCOPED (a Role, not a ClusterRole) and LEAST PRIVILEGE: the
+# app may only get/list/patch Secrets and Deployments in ${NAMESPACE_DEV} — the
+# exact verbs needed to read seat state and assign a credential + restart. It can
+# NOT create or delete anything, and has no reach outside this namespace.
+#
+# The admin key is NOT in this manifest — it comes from the out-of-band Secret
+# `seat-manager-admin` (created by the deploy script with `openssl rand`).
+# =============================================================================
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: seat-manager
+  namespace: ${NAMESPACE_DEV}
+  labels:
+    app.kubernetes.io/name: seat-manager
+    app.kubernetes.io/part-of: vosj-poc
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: seat-manager
+  namespace: ${NAMESPACE_DEV}
+  labels:
+    app.kubernetes.io/name: seat-manager
+    app.kubernetes.io/part-of: vosj-poc
+rules:
+  # Read seat state + write the per-seat credential Secret. No create/delete.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "patch"]
+  # Read seat readiness + bump the restart annotation. No create/delete.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: seat-manager
+  namespace: ${NAMESPACE_DEV}
+  labels:
+    app.kubernetes.io/name: seat-manager
+    app.kubernetes.io/part-of: vosj-poc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: seat-manager
+subjects:
+  - kind: ServiceAccount
+    name: seat-manager
+    namespace: ${NAMESPACE_DEV}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seat-manager
+  namespace: ${NAMESPACE_DEV}
+  labels:
+    app.kubernetes.io/name: seat-manager
+    app.kubernetes.io/instance: seat-manager
+    app.kubernetes.io/part-of: vosj-poc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seat-manager
+      app.kubernetes.io/instance: seat-manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seat-manager
+        app.kubernetes.io/instance: seat-manager
+        app.kubernetes.io/part-of: vosj-poc
+    spec:
+      serviceAccountName: seat-manager
+      imagePullSecrets:
+        - name: ${ACR_PULL_SECRET}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: seat-manager
+          image: ${SEAT_MANAGER_IMAGE}
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DEVSTATIONS_NAMESPACE
+              value: "${NAMESPACE_DEV}"
+            - name: SEAT_COUNT
+              value: "${DEVSTATION_COUNT}"
+            # Node's global fetch (undici) IGNORES a per-request https agent, so the
+            # cluster's self-signed API CA must be trusted process-wide. Point Node
+            # at the mounted ServiceAccount CA so the in-cluster k8s API calls verify.
+            - name: NODE_EXTRA_CA_CERTS
+              value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            # Admin key from the out-of-band Secret. If unset, the app fails
+            # CLOSED (503 on every /api route) rather than serving open.
+            - name: SEAT_MANAGER_ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: seat-manager-admin
+                  key: SEAT_MANAGER_ADMIN_KEY
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "25m"
+              memory: "32Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seat-manager
+  namespace: ${NAMESPACE_DEV}
+  labels:
+    app.kubernetes.io/name: seat-manager
+    app.kubernetes.io/instance: seat-manager
+    app.kubernetes.io/part-of: vosj-poc
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: seat-manager
+    app.kubernetes.io/instance: seat-manager
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

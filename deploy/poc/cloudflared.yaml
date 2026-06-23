@@ -1,0 +1,60 @@
+# =============================================================================
+# cloudflared.yaml — Cloudflare Tunnel connector for the POC (token-based, exactly
+# like the live fleet's cloudflared-devstations). Routes public *.vosj.com demo
+# hostnames to in-cluster services. Ingress + DNS are configured remotely via the
+# CF API by 60-deploy-tunnel.sh; this connector just runs the named tunnel.
+#
+# Rendered by 60-deploy-tunnel.sh via envsubst. Vars: ${NAMESPACE_VOSJ}.
+# The connector token is read from the Secret 'cloudflared-token' (minted by the
+# deploy script from the CF API; never committed).
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: ${NAMESPACE_VOSJ}
+  labels:
+    app: cloudflared
+    app.kubernetes.io/part-of: vosj-poc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+        app.kubernetes.io/part-of: vosj-poc
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args: ["tunnel", "--no-autoupdate", "--protocol", "http2", "run"]
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cloudflared-token
+                  key: token
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "192Mi"
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: 2000
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
