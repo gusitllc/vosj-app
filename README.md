@@ -141,3 +141,5 @@ Connectors and Executors are the heart of the community. See [`CONTRIBUTING.md`]
 **Apache License 2.0** — © 2026 **Gustavo Assuncao / Gus IT LLC**, original creator and author. Free and open source: use, modify, distribute, and sell freely — including in closed/proprietary products — with an explicit patent grant. In return, keep the `LICENSE` and reproduce the [`NOTICE`](NOTICE) attribution when you redistribute. See [`LICENSE`](LICENSE).
 
 *The managed Luca AI personas and per-engineer digital twins (the commercial Enterprise offering) are a separate hosted service; this Apache-2.0 license covers the Vosj engine code in this repository.*
+
+**IP / prior art.** The inventive concepts behind Vosj are disclosed as a dated **defensive publication** — see [`DEFENSIVE-PUBLICATION.md`](DEFENSIVE-PUBLICATION.md) (§21 enumerates the inventive claims). Because Vosj is open source, this disclosure establishes the techniques as public **prior art** so they cannot be patented and asserted against the project, its users, or contributors — complementing the Apache-2.0 patent grant.
