@@ -84,10 +84,10 @@ Tool-using LLM agents can now perform migration toil *if* they are given (a) a s
 | **Self-hosting platform/DevOps team** | Runs their own AKS / on-prem K8s; migrating their own estate | The full V·O·S·J engine, gates, reconciliation, and executor catalog inside their own cluster — no data leaves their boundary | Data residency and control; no per-seat AI bill; bring their existing AI seats |
 | **Migration / cloud MSP** | Delivers migrations for clients | A repeatable, audited factory they can stand up per engagement and walk an auditor through (VG-26 export) | Brand-neutral, self-hosted per client; upgrade to EE only when they want managed AI labour |
 | **Regulated enterprise (eval / pilot)** | Large, heterogeneous, audit-sensitive estate | A POC-ready engine where the safety properties are *structural* and re-derivable (white paper App I), not promised in a slide | Proves the governance model on their own tenant before committing to managed AI |
-| **Open-source contributor** | Wants to add a source/target/storage/signer/scanner | A clean five-contract plugin seam (`Connector`/`Executor`/`StateStore`/`GateSigner`/`AssessmentProvider`) and a public CAF template to clone | Source-available under BSL-1.1; contributions land in the open core |
+| **Open-source contributor** | Wants to add a source/target/storage/signer/scanner | A clean five-contract plugin seam (`Connector`/`Executor`/`StateStore`/`GateSigner`/`AssessmentProvider`) and a public CAF template to clone | Open source under Apache-2.0; contributions land in the open core (inbound = outbound, §5) |
 | **Primary test/reference operator** | Deploys onto **AKS enabled by Azure Arc on Azure Local (Azure Stack HCI)** | A fully documented reference deployment on the hardest realistic substrate (on-prem K8s, MetalLB, CSI VHDX, CloudNativePG) | The exact target the engine is hardened and end-to-end tested against (DESIGN §3; DEPLOYMENT) |
 
-**Buyer-vs-contributor split.** The *buyer* of CE wants a safe, neutral, self-hosted migration engine and is the upgrade path to EE. The *contributor* wants a clean, well-documented seam to extend; CE serves them with the five plugin contracts and the BSL-1.1 source-available grant. Both are first-class.
+**Buyer-vs-contributor split.** The *buyer* of CE wants a safe, neutral, self-hosted migration engine and is the upgrade path to EE. The *contributor* wants a clean, well-documented seam to extend; CE serves them with the five plugin contracts and the Apache-2.0 grant (inbound = outbound, with its explicit patent grant). Both are first-class.
 
 ---
 
@@ -124,7 +124,7 @@ Stating the boundaries explicitly is part of the purpose — it keeps the CE↔E
 
 - **NOT the managed AI.** CE is **bring-your-own-AI**. It does **not** include the managed Luca AI personas or the per-engineer digital twins, nor the self-improvement / "dreaming" learning loop run as a service. Those are the **closed Enterprise add-on** (white paper §11; CE site). CE ships the *fabric* (MCP server + devstation pods + Command Center); the *AI brain that drives it autonomously off-hours* is EE. **The plumbing is open; the AI brain is the add-on.**
 - **NOT a hosted SaaS.** CE is self-hosted, local-first, **no account required**. There is no Vosj-operated control plane, no Stripe billing, no per-tenant SaaS namespace isolation, no metering bill on us. Multi-tenant SaaS isolation and managed hosting belong to the closed/managed plane, not CE.
-- **NOT closed.** CE source is available under **BSL-1.1** (see §6). The migration *content* (7-R taxonomy, Strangler-Fig, public APIs) is public knowledge; the open core is the *operationalised combination* of that content into a governed engine — and that engine is in the open.
+- **NOT closed.** CE source is open under **Apache-2.0** (see §6). The migration *content* (7-R taxonomy, Strangler-Fig, public APIs) is public knowledge; the open core is the *operationalised combination* of that content into a governed engine — and that engine is in the open.
 - **NOT a lift-without-verify tool.** Vosj will not produce a big-bang plan for a high-risk disposition: Refactor and Relocate dispositions resolve only to runbook templates that emit incremental, parallel-run (Strangler-Fig) steps — a big-bang plan for those is *physically unavailable* (white paper §7 callout, VG-05). And no cutover can complete without a verified equivalence proof (VG-10). If you want "copy the disk and pray," Vosj is the wrong tool.
 - **NOT a single-VM express tool (today).** The full Vault→Verify discipline is overkill for a single-VM lift-and-shift; an "express" template that streamlines the gate set is acknowledged future work and must **never** drop the verified-before-cutover gate (white paper §22, §23).
 - **NOT a Luca Express module.** CE is its **own standalone repository** (`e:/apps/vosj/vosj-app`), not a domain inside the Luca gateway. The Luca Golden Rules (token-engine bridge, `aios-core-db` facade, AIOS Shell) are **not literally binding** on the CE codebase; CE carries over their *spirit* (config-driven, fail-closed gates, mandatory `verify()`, auth on every route, parameterised SQL) and DESIGN.md states precisely which apply (DESIGN §2, §7).
@@ -134,16 +134,16 @@ Stating the boundaries explicitly is part of the purpose — it keeps the CE↔E
 
 ## §6. Compliance & license posture (baked into purpose)
 
-### 6.1 License — BSL-1.1, source-available, converts to open
+### 6.1 License — Apache 2.0, permissive open source with an explicit patent grant
 
-CE is licensed under the **Business Source License 1.1** (`BUSL-1.1`) — stated verbatim in the CE site: *"Source-available under the Business Source License (converts to Apache over time)."* This means:
+CE is licensed under the **Apache License 2.0** (`Apache-2.0`) — stated on the CE site: *"open source under the Apache License 2.0."* This means:
 
-- **Source-available, not proprietary.** Anyone may read, modify, and self-host the source.
-- **Additional Use Grant** permits self-hosted, non-competing production use (the exact grant text is fixed at first release).
-- **Change Date** (≤ 4 years after each version's release) converts that version to a GPL-2.0-or-later-compatible Change License (BSL canonical terms; SPDX `BUSL-1.1`).
-- The **managed AI personas + per-engineer digital twins remain proprietary EE** — they are *not* under BSL and *not* part of CE.
+- **Permissive open source.** Anyone may use, read, modify, self-host, distribute, and sell the source — including inside closed or proprietary products — free of charge.
+- **Explicit patent grant + retaliation.** Every contributor grants a royalty-free, irrevocable patent license to their contribution; that grant terminates for any party that brings patent litigation against the work — protecting the prior art behind the design (created and authored by Gustavo Assuncao, backed by technical publications).
+- **Attribution propagates.** Redistribution must retain the `LICENSE`, mark modified files, and reproduce the `NOTICE` file — which credits **Gustavo Assuncao / Gus IT LLC** as the original creator and author (Apache §4(d)).
+- The **managed AI personas + per-engineer digital twins remain proprietary EE** — they are *not* under Apache-2.0 and *not* part of CE.
 
-Project owner: **Gus IT LLC** ("Vosj — an open-source project of Gus IT LLC.").
+Project owner: **Gus IT LLC**; original creator & author **Gustavo Assuncao** ("Vosj — an open-source project of Gus IT LLC.").
 
 ### 6.2 Data handling is the operator's responsibility (because CE is self-hosted)
 

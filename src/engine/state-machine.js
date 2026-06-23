@@ -12,7 +12,21 @@
 
 'use strict';
 
+const disposition = require('./disposition');
+
 const UNIT_STATES = Object.freeze(['legacy', 'dual_running', 'reconciled', 'migrated']);
+
+// The phrase that marks the P2 kickoff gate's disposition criterion. A gate is
+// "disposition-bearing" if its id is the kickoff id OR it declares this criterion.
+const KICKOFF_CRITERION = 'every in-scope workload carries a disposition';
+
+// Frozen rule map keyed by gateId. kind drives which machine-checkable criteria
+// the engine COMPUTES (gate.js fails closed on criteriaMet===false). Data-driven
+// so a template can opt a differently-named gate into the same rule via criteria.
+const GATE_CRITERIA_RULES = Object.freeze({
+  'g-kickoff-complete': 'kickoff',     // P2 exit: every in-scope workload has a disposition
+  'g-planning-signoff': 'planning',    // P3 exit: bind executors from contract + CI/CD-365 gate
+});
 
 // The non-removable cutover gate the engine injects on every template.
 const INJECTED_CUTOVER_GATE = Object.freeze({
@@ -71,8 +85,53 @@ class StateMachine {
       evidence,
       proof,
     });
+    // Compute machine-checkable criteria for disposition-bearing gates and hand
+    // the verdict to the signer; gate.js (L40) fails closed on criteriaMet===false.
+    const computed = await this.evaluateGateCriteria(gateDef, run);
+    if (computed !== null) gate.criteriaMet = computed;
     const row = await this.signer.sign(gate, signer);
     return { state: to, gate: gate.id, ledger: row };
+  }
+
+  // evaluateGateCriteria(gateDef, run) -> true | false | null.
+  // null  = gate is not disposition-bearing (criteria left to the existing flow).
+  // true  = all computed criteria satisfied; false = at least one fails (fail-closed).
+  async evaluateGateCriteria(gateDef, run) {
+    const kind = gateRuleKind(gateDef);
+    if (!kind) return null;
+    if (!this.store || typeof this.store.listWorkloads !== 'function') return false;
+    const workloads = (await this.store.listWorkloads({ waveId: run && run.id })) || [];
+    const inScope = workloads.filter((w) => w && w.inScope !== false);
+    if (kind === 'kickoff') return this._everyWorkloadHasDisposition(inScope);
+    if (kind === 'planning') return this._bindPlanningExecutors(inScope, run);
+    return false;
+  }
+
+  // P2 exit: a wave may not leave kickoff unless EVERY in-scope workload carries a
+  // valid 7-R disposition. Zero in-scope workloads is also a fail (nothing decided).
+  _everyWorkloadHasDisposition(inScope) {
+    if (inScope.length === 0) return false;
+    return inScope.every((w) => w.disposition && disposition.ALL.includes(w.disposition));
+  }
+
+  // P3 exit: derive each in-scope workload's contract FROM its disposition, bind the
+  // executor/runbook strictly from that contract (gap 41), and fail closed when a
+  // CI/CD-365-preconditioned contract lacks cicd365Ready (gap 44).
+  _bindPlanningExecutors(inScope, run) {
+    if (inScope.length === 0) return false;
+    if (run && !run.plan) run.plan = {};
+    const bindings = (run && run.plan && run.plan.executorBindings) || {};
+    let ok = true;
+    for (const w of inScope) {
+      if (!w.disposition || !disposition.ALL.includes(w.disposition)) { ok = false; continue; }
+      const contract = disposition.contractFor(w.disposition);
+      assertHighRiskStranglerFig(w.disposition, contract);
+      bindings[w.id] = bindingFromContract(contract);
+      if (contract.deliverySystemPrecondition === true &&
+          !(w.attributes && w.attributes.cicd365Ready === true)) ok = false;
+    }
+    if (run && run.plan) run.plan.executorBindings = bindings;
+    return ok;
   }
 
   // ---- unit lifecycle FSM (cutover is the gated, injected transition) ----
@@ -111,6 +170,38 @@ class StateMachine {
   }
 }
 
+// gateRuleKind(gateDef) -> 'kickoff' | 'planning' | null. Matched by gate id OR,
+// for the kickoff rule, by the presence of the canonical disposition criterion so
+// a renamed gate that declares it still gets enforced (data-driven, not hardcoded).
+function gateRuleKind(gateDef) {
+  if (!gateDef) return null;
+  if (GATE_CRITERIA_RULES[gateDef.id]) return GATE_CRITERIA_RULES[gateDef.id];
+  const criteria = Array.isArray(gateDef.criteria) ? gateDef.criteria : [];
+  if (criteria.some((c) => typeof c === 'string' && c.includes(KICKOFF_CRITERION))) {
+    return 'kickoff';
+  }
+  return null;
+}
+
+// The executor binding is taken STRICTLY from the disposition contract — the
+// executor/runbook/cutover style are selected at planning from the disposition,
+// never chosen at runtime (gap 41).
+function bindingFromContract(contract) {
+  return Object.freeze({
+    executorClass: contract.executorClass,
+    runbookTemplate: contract.runbookTemplate,
+    cutoverStyle: contract.cutoverStyle,
+  });
+}
+
+// Assert (do not duplicate) the §7 structural guarantee: a high-risk disposition
+// must already resolve to Strangler-Fig in the contract table.
+function assertHighRiskStranglerFig(name, contract) {
+  if (contract.highRisk === true && contract.cutoverStyle !== disposition.CUTOVER.STRANGLER_FIG) {
+    throw new Error(`disposition ${name} is high-risk but not Strangler-Fig — structural guarantee violated`);
+  }
+}
+
 function indexTemplate(template) {
   const gates = {};
   for (const p of template.phases) {
@@ -121,4 +212,4 @@ function indexTemplate(template) {
   return { gates };
 }
 
-module.exports = { StateMachine, UNIT_STATES, INJECTED_CUTOVER_GATE };
+module.exports = { StateMachine, UNIT_STATES, INJECTED_CUTOVER_GATE, GATE_CRITERIA_RULES };

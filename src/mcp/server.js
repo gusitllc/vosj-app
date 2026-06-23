@@ -5,17 +5,34 @@
 // Methods: initialize, tools/list, tools/call. Engine ops are exposed as MCP TOOLS
 // (an explicit allow-list in ./tools); every tool call is audited to vosj.tool_log.
 //
-// AuthN reuses the REST bearer middleware (requireAuth). AuthZ for mutating tools is
-// enforced structurally by the engine (HumanGateSigner) — never granted here.
+// AuthN reuses the REST bearer middleware (requireAuth). AuthZ is enforced at the
+// seam: each tool is bound to a required capability (tools.requiredCapabilityFor)
+// and EVERY tools/call is pre-filtered against the caller's capability — reusing
+// auth.holdsCapability + the configured RBAC registry — before the tool runs (gaps
+// 64/153). The mutating-gate guarantee is ALSO re-validated structurally in the
+// engine (HumanGateSigner): the seam check is defence in depth, never a substitute.
+//
+// Confused-deputy / token pass-through (gap 156, RFC 8707 audience): the inbound
+// bearer is NEVER forwarded upstream — tools call the LOCAL engine only. Before a
+// tool runs we additionally assert the principal was minted for THIS local Hub
+// (its auth mode is a recognised local mode) and bind the exercised capability +
+// audience into the tool_log audit.
 
 'use strict';
 
 const crypto = require('crypto');
-const { requireAuth } = require('../api/auth');
+const { requireAuth, holdsCapability, getRbacRegistry } = require('../api/auth');
 const tools = require('./tools');
 
 const PROTOCOL_VERSION = '2025-06-18';
 const SESSION_HEADER = 'mcp-session-id';
+
+// The audience for an MCP tool call is THIS local Hub. A principal is valid for the
+// local Hub only if it was authenticated by the local auth layer (token or open
+// mode). Any other/unknown mode is rejected fail-closed — an inbound token is never
+// passed through to a downstream resource (RFC 8707 audience restriction, gap 156).
+const LOCAL_HUB_AUDIENCE = 'vosj-hub';
+const LOCAL_AUTH_MODES = Object.freeze(new Set(['token', 'open']));
 
 // JSON-RPC 2.0 error codes (spec §5.1).
 const RPC = Object.freeze({
@@ -49,14 +66,54 @@ function handleToolsList() {
   return { tools: tools.listToolDefs() };
 }
 
-async function handleToolsCall(params, ctx, actor) {
+function rpcFault(message, code) {
+  const err = new Error(message);
+  err.rpcCode = code;
+  return err;
+}
+
+// authorizeToolCall(name, principal) -> the bound capability, or throws an RPC
+// INTERNAL fault when the call must be rejected at the seam (gaps 64/153/156). It:
+//   (1) requires an authenticated principal (no anonymous tool call);
+//   (2) asserts the principal's audience is THIS local Hub — its auth mode is a
+//       recognised local mode — so an inbound token is never accepted as a
+//       pass-through credential for a downstream resource (RFC 8707, gap 156);
+//   (3) resolves the tool's bound required capability (fail-closed: a tool with no
+//       declared capability is not callable);
+//   (4) pre-filters: the principal must hold that capability via auth.holdsCapability
+//       against the SAME configured RBAC registry requireCapability consults.
+// Returns { capability, audience } recorded into the tool_log audit.
+function authorizeToolCall(name, principal) {
+  if (!principal) {
+    throw rpcFault('authentication required for tools/call', RPC.INTERNAL);
+  }
+  if (!LOCAL_AUTH_MODES.has(principal.mode)) {
+    // Confused-deputy guard: only a principal minted/validated by the local Hub
+    // may exercise a tool; a foreign-audience token is refused (never forwarded).
+    throw rpcFault('principal audience is not this Hub (token pass-through refused)', RPC.INTERNAL);
+  }
+  const capability = tools.requiredCapabilityFor(name);
+  if (!capability) {
+    throw rpcFault(`tool not bound to a capability: ${name}`, RPC.INTERNAL);
+  }
+  if (!holdsCapability(principal, capability, getRbacRegistry())) {
+    throw rpcFault(`missing capability: ${capability}`, RPC.INTERNAL);
+  }
+  return { capability, audience: LOCAL_HUB_AUDIENCE };
+}
+
+async function handleToolsCall(params, ctx, principal) {
   const name = params && params.name;
   if (!name || !tools.isAllowed(name)) {
-    const err = new Error(`unknown or disallowed tool: ${name}`);
-    err.rpcCode = RPC.METHOD_NOT_FOUND;
-    throw err;
+    throw rpcFault(`unknown or disallowed tool: ${name}`, RPC.METHOD_NOT_FOUND);
   }
-  const envelope = await tools.runTool(name, (params && params.arguments) || {}, ctx, actor);
+  // PER-TOOL RBAC PRE-FILTER: authorize BEFORE the tool reaches the engine. A
+  // rejection here means the engine is never touched (the seam is the gate); the
+  // engine still re-validates the human gate as defence in depth.
+  const bound = authorizeToolCall(name, principal);
+  const actor = principal ? principal.id : null;
+  const envelope = await tools.runTool(
+    name, (params && params.arguments) || {}, ctx, actor, bound);
   // MCP wraps tool output in content[]; isError mirrors the house envelope.
   return {
     content: [{ type: 'text', text: JSON.stringify(envelope) }],
@@ -65,13 +122,11 @@ async function handleToolsCall(params, ctx, actor) {
   };
 }
 
-async function dispatch(method, params, ctx, actor) {
+async function dispatch(method, params, ctx, principal) {
   if (method === 'initialize') return handleInitialize(params, ctx);
   if (method === 'tools/list') return handleToolsList();
-  if (method === 'tools/call') return handleToolsCall(params, ctx, actor);
-  const err = new Error(`method not found: ${method}`);
-  err.rpcCode = RPC.METHOD_NOT_FOUND;
-  throw err;
+  if (method === 'tools/call') return handleToolsCall(params, ctx, principal);
+  throw rpcFault(`method not found: ${method}`, RPC.METHOD_NOT_FOUND);
 }
 
 // validateEnvelope(body) -> null | { code, message } describing a JSON-RPC fault.
@@ -105,8 +160,9 @@ function mount(app, ctx) {
     if (fault) return res.status(200).json(rpcError(id, fault.code, fault.message));
 
     try {
-      const actor = req.principal ? req.principal.id : null;
-      const result = await dispatch(body.method, body.params, ctx, actor);
+      // Pass the full authenticated principal so the seam can pre-filter the call
+      // against its capability + audience (requireAuth attached req.principal).
+      const result = await dispatch(body.method, body.params, ctx, req.principal);
       return res.status(200).json(rpcResult(id, result));
     } catch (e) {
       const code = e.rpcCode || RPC.INTERNAL;

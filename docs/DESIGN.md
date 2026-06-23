@@ -39,14 +39,14 @@
 
 Vosj CE is a **standalone repository** at `e:/apps/vosj/vosj-app`. It is **NOT** a domain module inside `luca-gateway`, and this is a deliberate divergence from every other Luca app (e.g. `aios-core-apps/domains/operate/apps/ai-workforce`, which ships *inside* the gateway image). The reasons:
 
-- CE is **self-hosted by the operator** under **AGPL-3.0-only** (see `package.json` line 5: `"license": "AGPL-3.0-only"`).
-  - **License note / divergence to resolve (Open Question §16-Q1).** The CE program site (`change-management/vosj-community-edition/site/index.html`) describes the edition as *source-available under BSL-1.1 (converts to Apache)*, while the generated `package.json` declares **AGPL-3.0-only**. These are two different open-core wedges (copyleft-network vs. source-available-with-change-date). DESIGN treats the **license string in `package.json` as authoritative for the code as built today**, and flags the mismatch for the CORE-IDEA/PURPOSE/COST-MODEL authors and the platform owner to reconcile. Either choice keeps the moat closed; the choice only changes *how* third parties may run/compete.
+- CE is **self-hosted by the operator** under **Apache-2.0** (see `package.json`: `"license": "Apache-2.0"`).
+  - **License note — RESOLVED (2026-06-23, Open Question §16-Q1).** The license is now **Apache-2.0**, aligned across `package.json`, the `LICENSE` file (full Apache 2.0 text), the `NOTICE` file (creator/author attribution to Gustavo Assuncao / Gus IT LLC), and the CE site. The earlier AGPL-3.0-only-vs-BSL-1.1 divergence is closed. Apache-2.0 is permissive with an explicit patent grant + retaliation clause — chosen to protect the prior art behind the design (backed by technical publications) while keeping adoption frictionless; the managed Luca AI / twins remain proprietary EE.
 - CE has **no Luca Golden-Rule literal binding** — it does not import `token-engine.js`, `aios-core-db`, or AIOS Shell. It carries the *spirit* of the rules in its own primitives (§14).
 - CE has **no SaaS multi-tenancy, no Stripe, no per-tenant KEK, no billing** — those belong to the closed/managed Enterprise plane, not CE.
 
 ```
 e:/apps/vosj/vosj-app
-├── package.json            # name "vosj-ce", AGPL-3.0-only, node>=20, scripts: start/dev/test/migrate   [BUILT]
+├── package.json            # name "vosj-ce", Apache-2.0, node>=20, scripts: start/dev/test/migrate   [BUILT]
 ├── .env.example            # every value has a safe default EXCEPT the fail-closed secrets             [BUILT]
 ├── .dockerignore .gitignore                                                                            [BUILT]
 ├── templates/
@@ -588,7 +588,7 @@ The Formation gate (CLAUDE.md) is explicit: **no code is "done" until it has gon
 
 ## §16 Open questions
 
-- **Q1 — License reconciliation (highest priority).** `package.json` declares **AGPL-3.0-only**; the CE program site says **BSL-1.1 → Apache**. Pick one before any public release; COST-MODEL's open-core funnel and PURPOSE's posture both depend on the answer. (Owner + CORE-IDEA/PURPOSE authors.)
+- **Q1 — License reconciliation — RESOLVED (2026-06-23).** CE is **Apache-2.0**, aligned across `package.json`, `LICENSE`, `NOTICE`, and the CE site (EN/FR/DE/ES/PT). The earlier AGPL-3.0-only-vs-BSL-1.1 mismatch is closed; COST-MODEL's open-core funnel and PURPOSE's posture now key off Apache-2.0 (permissive + explicit patent grant). (Owner: Gustavo Assuncao / Gus IT LLC.)
 - **Q2 — Order-queue table.** §6 specifies a DB-backed durable queue with atomic claim, but `schema.sql` does not yet contain the queue table. IMPLEMENTATION-PLAN must add it (`[ASSUMPTION]`: `vosj.orders` with `SELECT … FOR UPDATE SKIP LOCKED`).
 - **Q3 — Three-way in-flight reversal.** White-paper §13.2 requires three-way authorisation for in-flight contingency reversal; `gate.js` enforces single-role signing today. The multi-signer gate variant is unbuilt.
 - **Q4 — Waiver enforcement.** The `vosj.waivers` table exists, but the engine does not yet *consult* it when a gate criterion fails; wiring (and the non-waivable Inv. 1/5/6 block) is BUILD-PENDING.

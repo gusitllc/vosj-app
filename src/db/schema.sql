@@ -17,6 +17,31 @@ CREATE TABLE IF NOT EXISTS vosj.templates (
   created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Template lifecycle columns (PKG-TEMPLATE-LIFECYCLE, §8.2/§8.3 — clone/lineage,
+-- create/edit/publish, tenant scoping). Additive & idempotent so the DB-backed
+-- loader (src/engine/template-store.js) persists the compiled body alongside
+-- lineage/owner/tenant without forking the core template engine (gap 63).
+-- updated_at stamps the last edit; owner/tenant_id scope a tenant-private template.
+-- NOTE: schema.sql is shared with PKG-VAULT/PKG-METERING/PKG-FOUR-EYES — this
+-- ALTER block is self-contained and IF NOT EXISTS so packages can land in any order.
+ALTER TABLE IF EXISTS vosj.templates ADD COLUMN IF NOT EXISTS owner      TEXT;
+ALTER TABLE IF EXISTS vosj.templates ADD COLUMN IF NOT EXISTS tenant_id  TEXT;
+ALTER TABLE IF EXISTS vosj.templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
+CREATE INDEX IF NOT EXISTS vosj_templates_visibility_idx ON vosj.templates (visibility, tenant_id);
+CREATE INDEX IF NOT EXISTS vosj_templates_lineage_idx    ON vosj.templates (parent_template_id);
+
+-- Framework roles (§8.2, gap 54/55) — generalises the hardcoded role set into a
+-- data-driven, per-template table so a template can declare its own signoff roles
+-- and bind each to an RBAC capability. PK (template_id, role_key) makes save idempotent.
+CREATE TABLE IF NOT EXISTS vosj.framework_roles (
+  template_id     TEXT NOT NULL,
+  role_key        TEXT NOT NULL,
+  display         TEXT,
+  rbac_capability TEXT,
+  PRIMARY KEY (template_id, role_key)
+);
+
 -- Workloads — one in-scope application/unit, carrying its 7-R disposition (§7).
 CREATE TABLE IF NOT EXISTS vosj.workloads (
   id            TEXT PRIMARY KEY,
@@ -29,6 +54,15 @@ CREATE TABLE IF NOT EXISTS vosj.workloads (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Revocable-acceptance columns (PKG-REVOCABLE-ACCEPTANCE, §13.2 / §6 P6).
+-- accepted_at stamps a SUCCESSFUL cutover so the 30-min revocation window can be
+-- evaluated; acceptance_status tracks the post-cutover acceptance lifecycle
+-- (pending -> accepted -> revoked|reversed). Idempotent — safe on an existing table.
+-- NOTE: schema.sql is shared with PKG-VAULT and PKG-METERING; this ALTER block is
+-- self-contained and IF NOT EXISTS so the packages can land in any order.
+ALTER TABLE IF EXISTS vosj.workloads ADD COLUMN IF NOT EXISTS accepted_at       TIMESTAMPTZ;
+ALTER TABLE IF EXISTS vosj.workloads ADD COLUMN IF NOT EXISTS acceptance_status TEXT DEFAULT 'pending';
 
 -- Waves — a planned migration batch bound to a framework template (pinned at kickoff).
 CREATE TABLE IF NOT EXISTS vosj.waves (
@@ -116,6 +150,66 @@ CREATE TABLE IF NOT EXISTS vosj.orders (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Encrypted credential vault (§15.2/§15.5). FAIL-CLOSED authenticated encryption
+-- (AES-256-GCM) under an operationally-supplied master key (VOSJ_VAULT_MASTER_KEY,
+-- never persisted). Stores ONLY ciphertext + iv + auth_tag — never plaintext.
+-- Credentials are addressed by an opaque `ref` (secret indirection): connectors
+-- reference, never embed, a secret. rotated_at stamps a re-encrypt (rotation).
+-- NOTE: schema.sql is shared with PKG-FOUR-EYES and PKG-METERING — this block is
+-- self-contained and idempotent (IF NOT EXISTS) so the packages can land in any
+-- order without colliding.
+CREATE TABLE IF NOT EXISTS vosj.credentials (
+  ref         TEXT PRIMARY KEY,
+  alg         TEXT NOT NULL,
+  ciphertext  TEXT NOT NULL,
+  iv          TEXT NOT NULL,
+  auth_tag    TEXT NOT NULL,
+  meta        JSONB NOT NULL DEFAULT '{}',
+  created_at  TIMESTAMPTZ DEFAULT now(),
+  rotated_at  TIMESTAMPTZ
+);
+
+-- Change-request register (PKG-FOUR-EYES, §12 Invariant 3 / §6 P3). Four-eyes
+-- change validation: a change authored by actor A is "validated" only when an
+-- INDEPENDENT human validator V (V !== A) records a diff-impact report; the
+-- queryable projection of "who authored which change, validated by whom, on what
+-- diff-impact" backs the P3 planning-gate precondition (the authoritative event is
+-- the 'change.validated' ledger row). status: pending -> validated. diff_impact
+-- holds the independent validator's diff-impact report.
+-- NOTE: schema.sql is shared with PKG-VAULT/PKG-METERING/PKG-TEMPLATE-LIFECYCLE —
+-- this block is self-contained and IF NOT EXISTS so the packages can land in any
+-- order without colliding.
+CREATE TABLE IF NOT EXISTS vosj.change_requests (
+  id          TEXT PRIMARY KEY,
+  wave_id     TEXT,
+  author      TEXT NOT NULL,
+  validator   TEXT,
+  diff_impact JSONB,
+  status      TEXT DEFAULT 'pending',
+  created_at  TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS vosj_change_requests_wave_idx ON vosj.change_requests (wave_id, status);
+
+-- Metering (PKG-METERING-OBSERVABILITY, §18 economics) — per-workload effort/cost
+-- capture so the four stations are not only audited but METERED. recordEffort()
+-- appends one row per signed transition / executor step; aggregate(wave_id) sums
+-- effort + cost and groups by phase. cost_units is the charged cost (effort priced
+-- by the config knob VOSJ_COST_PER_EFFORT_UNIT, never hardcoded at the call site).
+-- NOTE: schema.sql is shared with PKG-VAULT/PKG-FOUR-EYES/PKG-TEMPLATE-LIFECYCLE —
+-- this block is self-contained and IF NOT EXISTS so the packages can land in any
+-- order without colliding.
+CREATE TABLE IF NOT EXISTS vosj.metering (
+  id          BIGSERIAL PRIMARY KEY,
+  wave_id     TEXT,
+  workload_id TEXT,
+  phase       TEXT,
+  actor       TEXT,
+  effort_ms   BIGINT,
+  cost_units  NUMERIC,
+  ts          TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS vosj_metering_wave_idx ON vosj.metering (wave_id);
 
 CREATE INDEX IF NOT EXISTS vosj_workloads_wave_idx ON vosj.workloads (wave_id);
 CREATE INDEX IF NOT EXISTS vosj_ledger_ts_idx ON vosj.ledger (ts);

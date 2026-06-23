@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Vosj POC Seat Manager — credential-assignment console for devstation seats. Zero runtime deps (raw http + global fetch + in-cluster ServiceAccount).",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=20"
   },

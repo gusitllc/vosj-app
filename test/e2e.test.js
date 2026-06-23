@@ -69,10 +69,12 @@ test('e2e: Vault -> Orchestrate -> Shift -> Jump with signed gates + verified cu
     id: 'wave-1', name: 'Pilot wave', state: 'P1',
     framework_template_id: 'caf', framework_version: '1',
   });
+  // Replatform carries the CI/CD 365° delivery-system precondition, so the
+  // planning gate (P3->P4) is hard-blocked unless cicd365Ready is asserted (§7.1).
   const unit = await store.saveWorkload({
     id: seed.id, name: seed.name, disposition: 'Replatform', state: 'legacy',
     wave_id: wave.id, baseline_at: new Date().toISOString(),
-    attributes: { rowCount: seed.rowCount },
+    attributes: { rowCount: seed.rowCount, cicd365Ready: true },
   });
 
   // --- walk the phase FSM P1..P5 (Vault V -> Orchestrate O -> Shift S) ---
@@ -146,6 +148,10 @@ test('e2e: a tampered ledger row is detected by verifyChain', async () => {
   const { engine, ledger, store } = kit();
   const machine = engine.machineFor('caf');
   const run = { id: 'w2', state: 'P1' };
+  // A wave needs an in-scope, dispositioned workload to clear the kickoff/planning
+  // gates (Rehost is low-risk: no CI/CD precondition) before we exercise tampering.
+  await store.saveWorkload({ id: 'w2-app', name: 'App', disposition: 'Rehost',
+    state: 'legacy', wave_id: 'w2', attributes: {} });
   await signPhase(machine, run, 'P2');
   await signPhase(machine, run, 'P3');
 

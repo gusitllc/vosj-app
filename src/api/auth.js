@@ -27,6 +27,13 @@ function configureRbac(config) {
   return RBAC;
 }
 
+// getRbacRegistry() -> the currently-installed module-level registry. Lets other
+// seams (e.g. the MCP per-tool pre-filter) reuse the SAME configured registry that
+// requireCapability consults, rather than building a divergent one.
+function getRbacRegistry() {
+  return RBAC;
+}
+
 function isLocalRequest(req) {
   const ip = (req.ip || (req.socket && req.socket.remoteAddress) || '').toString();
   if (LOCAL_HOSTS.has(ip)) return true;
@@ -122,12 +129,31 @@ function safeEqual(a, b) {
 const CE_CAPABILITIES = Object.freeze([
   'migration:workload:write',
   'migration:disposition:write',
+  'migration:disposition:read',
   'migration:wave:write',
   'migration:wave:plan',
   'migration:wave:shift',
   'migration:reconcile:run',
   'migration:gate:sign',
   'migration:jump:execute',
+  'migration:ledger:read',
+  'migration:template:read',
+  // PKG-TEMPLATE-LIFECYCLE: authoring framework templates (create/clone/edit/
+  // publish). NOTE for eng-director: NEW capability — overlaps PKG-PER-TOOL-RBAC's
+  // one-new-cap convention; ensure the RBAC_ROLE_CAPABILITIES grant for the
+  // template-author role includes it when role-based grants are configured.
+  'migration:template:write',
+  // PKG-PER-TOOL-RBAC: read capabilities the MCP tool seam binds to its read-only
+  // tools (list_templates -> :template:read, classify_workload -> :disposition:read,
+  // ledger_verify -> :ledger:read). The default CE contributor principal holds them
+  // so legitimate read tools are callable; a CONFIGURED RBAC registry can still deny
+  // a narrower role per-tool (the seam consults the same registry as requireCapability).
+  // PKG-EVIDENCE-PACKAGE: reading the exportable, control-mapped governance evidence
+  // package (GET /api/waves/:id/evidence-package). NOTE for eng-director: NEW
+  // capability — same one-new-cap convention as PKG-TEMPLATE-LIFECYCLE's
+  // migration:template:write; when RBAC_ROLE_CAPABILITIES is configured, grant it to
+  // the auditor/reviewer role so an external auditor can pull the bundle read-only.
+  'migration:evidence:read',
 ]);
 
 function capabilitySet() {
@@ -150,6 +176,6 @@ function openPrincipal() {
 }
 
 module.exports = {
-  requireAuth, requireCapability, configureRbac, holdsCapability,
+  requireAuth, requireCapability, configureRbac, getRbacRegistry, holdsCapability,
   CE_CAPABILITIES, isLocalRequest,
 };

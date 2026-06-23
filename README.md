@@ -138,6 +138,6 @@ Connectors and Executors are the heart of the community. See [`CONTRIBUTING.md`]
 
 ## License
 
-**MIT License** — © 2026 **Gus IT LLC**. Free and open source: use, modify, and distribute freely; just keep the copyright notice. See [`LICENSE`](LICENSE).
+**Apache License 2.0** — © 2026 **Gustavo Assuncao / Gus IT LLC**, original creator and author. Free and open source: use, modify, distribute, and sell freely — including in closed/proprietary products — with an explicit patent grant. In return, keep the `LICENSE` and reproduce the [`NOTICE`](NOTICE) attribution when you redistribute. See [`LICENSE`](LICENSE).
 
-*The managed Luca AI personas and per-engineer digital twins (the commercial Enterprise offering) are a separate hosted service; this MIT license covers the Vosj engine code in this repository.*
+*The managed Luca AI personas and per-engineer digital twins (the commercial Enterprise offering) are a separate hosted service; this Apache-2.0 license covers the Vosj engine code in this repository.*

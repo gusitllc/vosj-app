@@ -1,0 +1,25 @@
+Vosj Community Edition
+Copyright 2026 Gustavo Assuncao / Gus IT LLC
+
+Created and originally authored by Gustavo Assuncao (Gus IT LLC).
+
+The V·O·S·J migration-factory design — the four-station model
+(Vault -> Orchestrate -> Shift -> Jump), the seven-phase gated reference
+framework, the verified-before-cutover / no-agent-self-sign / separation-of-
+duties safety invariants, and the tamper-evident hash-chained gate ledger —
+derives from technical publications and original design work by
+Gustavo Assuncao.
+
+This product is licensed under the Apache License, Version 2.0 (the
+"License"); you may not use this product except in compliance with the
+License. A copy of the License is provided in the LICENSE file and at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+When you redistribute this software or any Derivative Work, the Apache
+License (Section 4(d)) requires you to reproduce the attribution notices
+contained in this NOTICE file. Please retain the credit to
+Gustavo Assuncao / Gus IT LLC as the original creator and author.
+
+Project:  https://vosj.com
+Source:   https://github.com/gusitllc/vosj-app

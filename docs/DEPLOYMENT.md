@@ -3,7 +3,7 @@
 > **Artifact 6 of 7** of the Vosj CE idea→production Formation suite.
 > **Read order:** CORE-IDEA → PURPOSE → DESIGN → COST-MODEL → IMPLEMENTATION-PLAN → **DEPLOYMENT** → `IMPLEMENTATION-TRACKER.csv`.
 > **Authoring discipline:** every factual claim is anchored to a repo path or to the white paper (`e:/apps/vosj/site/whitepaper.html`, section ids `s5/s9/s12/s14/s15`). Every sizing/timing estimate is marked `[ASSUMPTION]`. No fabricated metrics.
-> **Binding foundation:** the white paper + the CE positioning (BSL-1.1 CE / managed Luca AI EE; bring-your-own-AI; verified-before-Jump fail-closed).
+> **Binding foundation:** the white paper + the CE positioning (Apache-2.0 CE / managed Luca AI EE; bring-your-own-AI; verified-before-Jump fail-closed).
 > **Scope of this document:** the *program-level* deploy runbook. The exact, copy-pasteable commands and manifests live next to the code at **`e:/apps/vosj/vosj-app/deploy/README.md`** — this file is the narrative, the gates, and the order; that file is the command surface. Where they disagree, `deploy/README.md` is authoritative for syntax and this file is authoritative for sequence and safety.
 
 ---
@@ -19,7 +19,7 @@ Vosj CE is a **standalone, self-hosted artifact** (`e:/apps/vosj/vosj-app`). It 
 | Entrypoint | `node src/server.js` (`npm start`) | `package.json` `scripts.start` |
 | HTTP port | `VOSJ_PORT`, default **8080** | `src/config.js` (`PORT`) |
 | Health route | **`GET /health`** (returns real engine + statestore + ledger metrics) | `src/engine/index.js`, `src/db/statestore.js`, `src/ledger/ledger.js` |
-| License (code) | **AGPL-3.0-only** as shipped in `package.json`; CE distribution posture is BSL-1.1→Apache per the CE program. Reconcile before public release (see §12). | `package.json` `license`; CE site |
+| License (code) | **Apache-2.0** — aligned across `package.json`, `LICENSE` (full text), `NOTICE` (creator attribution to Gustavo Assuncao / Gus IT LLC), and the CE site. | `package.json` `license`; `LICENSE`; `NOTICE`; CE site |
 | DB | PostgreSQL (CloudNativePG recommended; BYO Postgres supported; in-memory for evaluation) | `src/config.js`, `src/db/pool.js` |
 | Schema | single `vosj` schema, idempotent (`IF NOT EXISTS`) | `src/db/schema.sql` |
 | Migration | `npm run migrate` or `psql -f src/db/schema.sql` | `package.json`, `src/db/pool.js` `migrate()` |
@@ -329,7 +329,7 @@ Everything else — secrets, fail-closed gates, migration, devstations, `/health
 - **`VOSJ_CE_ENABLED`** gates any in-progress, user-facing surface. Ship dark, enable per the tracker's Exposure Cohort column. Never expose half-built capability without the flag (Multi-Agent CD non-negotiable).
 - **Verified-before-Jump is never behind a flag** — it is structural (Invariant 6 / VG-10). No flag, env var, or template may disable it.
 - **Rollout order:** migration Job → engine (dark, `VOSJ_CE_ENABLED=false`) → `/health` green → flip the flag for the evaluation cohort → run the end-to-end use case (§IMPLEMENTATION-PLAN) → widen cohort.
-- **License reconciliation (do before public release):** `package.json` currently declares `AGPL-3.0-only`; the CE program positions CE as **BSL-1.1 (converts to Apache)** with the managed Luca AI / twins kept proprietary EE. These must be reconciled — pick one CE license, set the BSL Additional Use Grant + Change Date if BSL, and align the `LICENSE` file, `package.json`, and the CE site before distributing. Tracked in `IMPLEMENTATION-TRACKER.csv`.
+- **License reconciliation — RESOLVED (2026-06-23):** CE is **Apache-2.0**, aligned across `package.json`, the `LICENSE` file (full Apache 2.0 text), the `NOTICE` file (creator/author attribution to Gustavo Assuncao / Gus IT LLC), and the CE site (EN/FR/DE/ES/PT). The earlier AGPL-3.0-only-vs-BSL-1.1 mismatch is closed; the managed Luca AI personas / per-engineer twins remain proprietary EE (not under Apache-2.0).
 
 ---
 
@@ -400,7 +400,7 @@ flowchart LR
 - **Networking:** MetalLB for AKS Arc — https://learn.microsoft.com/en-us/azure/aks/aksarc/load-balancer-overview · MetalLB via CLI — https://learn.microsoft.com/en-us/azure/aks/aksarc/deploy-load-balancer-cli · ingress-nginx bare-metal — https://kubernetes.github.io/ingress-nginx/deploy/baremetal/
 - **Storage:** CSI disk drivers (AKS Arc) — https://learn.microsoft.com/en-us/azure/aks/aksarc/container-storage-interface-disks · storage options — https://learn.microsoft.com/en-us/azure/aks/aksarc/concepts-storage
 - **Postgres:** CloudNativePG — https://cloudnative-pg.io/
-- **Licensing:** BSL 1.1 — https://mariadb.com/bsl11/ · SPDX BUSL-1.1 — https://spdx.org/licenses/BUSL-1.1.html
+- **Licensing:** Apache License 2.0 — https://www.apache.org/licenses/LICENSE-2.0 · SPDX Apache-2.0 — https://spdx.org/licenses/Apache-2.0.html
 
 ---
 

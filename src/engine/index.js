@@ -7,6 +7,7 @@
 
 const path = require('path');
 const template = require('./template');
+const { buildTemplateStore } = require('./template-store');
 const disposition = require('./disposition');
 const reconcile = require('./reconcile');
 const { StateMachine, UNIT_STATES, INJECTED_CUTOVER_GATE } = require('./state-machine');
@@ -22,10 +23,33 @@ function buildEngine({ config, store = null, ledger }) {
   const waivers = new WaiverRegistry({ store, ledger });
   const templates = template.loadDir(TEMPLATES_DIR);
 
+  // DB-backed template lifecycle (clone/create/edit/publish/diff). Only available
+  // when the store implements the optional template methods (memory + pg both do);
+  // absent on a bare store so the spine still boots (fail-soft, like waivers).
+  let templateStore = null;
+  if (store && typeof store.saveTemplateDb === 'function') {
+    try { templateStore = buildTemplateStore({ store }); } catch (_) { templateStore = null; }
+  }
+
+  // Filesystem-seeded template accessor — synchronous, used for version pinning at
+  // kickoff (routes.buildWave) and as the diff/clone parent fallback.
+  function fsTemplate(id) { return templates[id] || null; }
+
   function getTemplate(id) {
     const tpl = templates[id];
     if (!tpl) throw new Error(`unknown template: ${id}`);
     return tpl;
+  }
+
+  // getTemplateAsync(id) — filesystem first, then the DB overlay (gap 59/63). Lets a
+  // wave bind a DB-authored template without changing the synchronous getTemplate path.
+  async function getTemplateAsync(id) {
+    if (templates[id]) return templates[id];
+    if (templateStore) {
+      const dbTpl = await templateStore.get(id);
+      if (dbTpl) return dbTpl;
+    }
+    throw new Error(`unknown template: ${id}`);
   }
 
   function machineFor(templateId) {
@@ -44,7 +68,11 @@ function buildEngine({ config, store = null, ledger }) {
     // templates
     listTemplates() { return Object.values(templates).map(summary); },
     getTemplate,
+    getTemplateAsync,
+    fsTemplate,
     compileTemplate: template.compile,
+    // DB-backed lifecycle facade (null when the store has no template persistence).
+    templateStore,
 
     // disposition (7-R)
     classify: disposition.classify,

@@ -5,8 +5,11 @@ Executors are the heart of this project** — a Connector teaches Vosj how to mo
 kind of workload between one source/target pair, and proves the result is equivalent.
 This guide focuses on writing one.
 
-Vosj CE is **MIT-licensed** (© 2026 Gus IT LLC). By contributing you agree your
-contribution is licensed under the same MIT terms.
+Vosj CE is licensed under the **Apache License 2.0** (© 2026 Gustavo Assuncao /
+Gus IT LLC). By contributing you agree your contribution is submitted under the
+same Apache-2.0 terms (Section 5, inbound = outbound), including its patent
+grant, and that the project credits you as a contributor in line with the
+`NOTICE` file.
 
 ---
 

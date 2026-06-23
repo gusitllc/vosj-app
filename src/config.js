@@ -64,6 +64,28 @@ const config = Object.freeze({
 
   // Reconciliation / baseline tuning (configurable, never hardcoded at call sites).
   baselineMaxAgeMs: int(process.env.VOSJ_BASELINE_MAX_AGE_MS, 24 * 60 * 60 * 1000),
+
+  // Revocable acceptance (§13.2 / §6 P6): how long after a successful cutover the
+  // database authority may still revoke acceptance on detected drift. Default 30 min.
+  // NOTE: config.js is shared with PKG-PROVIDER-REGISTRY — this is the one knob this
+  // package adds; keep the additions disjoint to avoid a merge collision.
+  revocationWindowMs: int(process.env.VOSJ_REVOCATION_WINDOW_MS, 30 * 60 * 1000),
+
+  // Three-way contingency reversal (§13.2): the number of DISTINCT human signer ids
+  // required to reverse an in-flight/accepted cutover, so no single actor can force
+  // or abort it. Default 3 (the whitepaper's "three-way" authorisation).
+  reversalQuorum: int(process.env.VOSJ_REVERSAL_QUORUM, 3),
+
+  // Metering (PKG-METERING-OBSERVABILITY, §18 economics): the cost charged per unit
+  // of recorded effort. recordEffort() may pass cost_units explicitly; when it does
+  // not, metering derives cost = effortUnits * costPerEffortUnit. Config-driven so
+  // the unit price is NEVER hardcoded at the call site. Default 0 (no synthetic cost
+  // until an operator sets a price) — a fail-quiet default, not an insecure one.
+  // NOTE: config.js is shared with sibling packages — this is the one knob this
+  // package adds; keep the additions disjoint to avoid a merge collision.
+  costPerEffortUnit: Number.isFinite(parseFloat(process.env.VOSJ_COST_PER_EFFORT_UNIT))
+    ? parseFloat(process.env.VOSJ_COST_PER_EFFORT_UNIT)
+    : 0,
 });
 
 module.exports = config;

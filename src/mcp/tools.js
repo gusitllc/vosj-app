@@ -3,14 +3,27 @@
 // explicit ALLOW-LIST: tools/call rejects anything not registered here. Mutating
 // tools fail closed (sign_gate REQUIRES a human signer; the engine re-checks).
 // Every tool returns the house envelope { ok:true, ...data } | { ok:false, error }.
+//
+// PER-TOOL RBAC (gaps 64/153): every tool is bound to a single required capability
+// ({domain}:{resource}:{action}). The MCP seam (server.js) PRE-FILTERS a call
+// against the caller's capability BEFORE dispatch, reusing auth.holdsCapability +
+// the configured RBAC registry — a thin allow-list (isAllowed) is NOT authorization.
+// The bound capability is recorded into the tool_log audit so every external
+// interaction carries the authority it was exercised under (gap 156 / §14.2).
+// This is defence in depth: sign_gate is STILL re-validated structurally in the
+// engine (human signer, separation of duties) — the seam check never replaces it.
 
 'use strict';
 
 // JSON Schemas are advertised via tools/list so a planner can call correctly.
+// requiredCapability binds each tool to the {domain}:{resource}:{action} the caller
+// must hold; read-only tools take a :read capability, mutating tools their :write/
+// :run/:sign capability. The values intentionally match the CE capability namespace.
 const TOOLS = Object.freeze({
   list_templates: {
     description: 'List the available migration framework templates (V-O-S-J phases/gates).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    requiredCapability: 'migration:template:read',
     handler: listTemplates,
   },
   classify_workload: {
@@ -20,6 +33,7 @@ const TOOLS = Object.freeze({
       properties: { workload: { type: 'object' } },
       required: ['workload'],
     },
+    requiredCapability: 'migration:disposition:read',
     handler: classifyWorkload,
   },
   sign_gate: {
@@ -29,6 +43,7 @@ const TOOLS = Object.freeze({
       properties: { gate: { type: 'object' }, signer: { type: 'object' } },
       required: ['gate', 'signer'],
     },
+    requiredCapability: 'migration:gate:sign',
     handler: signGate,
   },
   run_reconcile: {
@@ -38,11 +53,13 @@ const TOOLS = Object.freeze({
       properties: { unit: { type: 'object' }, connector: { type: 'string' } },
       required: ['unit'],
     },
+    requiredCapability: 'migration:reconcile:run',
     handler: runReconcile,
   },
   ledger_verify: {
     description: 'Verify the tamper-evident hash-chained audit ledger end to end.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    requiredCapability: 'migration:ledger:read',
     handler: ledgerVerify,
   },
 });
@@ -57,6 +74,15 @@ function listToolDefs() {
 
 function isAllowed(name) {
   return Object.prototype.hasOwnProperty.call(TOOLS, name);
+}
+
+// requiredCapabilityFor(name) -> the {domain}:{resource}:{action} a caller must
+// hold to invoke `name`, or null for an unknown tool (caller must isAllowed first).
+// Every registered tool MUST declare one (fail-closed: an undeclared tool is not
+// callable — see authorizeToolCall in server.js).
+function requiredCapabilityFor(name) {
+  const def = isAllowed(name) ? TOOLS[name] : null;
+  return def && typeof def.requiredCapability === 'string' ? def.requiredCapability : null;
 }
 
 // ---- handlers (engine adapters) -------------------------------------------
@@ -100,8 +126,12 @@ async function ledgerVerify(_args, ctx) {
   return { ok: r.ok, brokenAt: r.brokenAt };
 }
 
-// runTool(name, args, ctx) -> envelope. Audits every call to vosj.tool_log.
-async function runTool(name, args, ctx, actor) {
+// runTool(name, args, ctx, actor, audit) -> envelope. Audits every call to
+// vosj.tool_log. `audit` is an optional metadata bag bound by the MCP seam AFTER a
+// successful authorization pre-filter — { capability, audience } — recorded so the
+// log shows the authority each external interaction was exercised under (gap 156).
+// runTool itself does NOT authorize; server.js authorizeToolCall is the seam gate.
+async function runTool(name, args, ctx, actor, audit = {}) {
   const started = Date.now();
   let result;
   try {
@@ -109,16 +139,18 @@ async function runTool(name, args, ctx, actor) {
   } catch (e) {
     result = { ok: false, error: e.message };
   }
-  await audit(ctx, name, args, result, actor, Date.now() - started);
+  await auditCall(ctx, name, args, result, actor, Date.now() - started, audit);
   return result;
 }
 
-async function audit(ctx, tool, args, result, actor, durationMs) {
+async function auditCall(ctx, tool, args, result, actor, durationMs, meta) {
   try {
     if (ctx.store && typeof ctx.store.appendToolLog === 'function') {
       await ctx.store.appendToolLog({
         server: 'vosj-mcp', tool, actor: actor || null,
-        arguments: redact(args), result, durationMs,
+        // The bound capability + audience ride in the audited arguments JSONB so the
+        // existing tool_log schema records the authority without a column change.
+        arguments: redact(args, meta), result, durationMs,
       });
     }
   } catch (e) {
@@ -127,13 +159,18 @@ async function audit(ctx, tool, args, result, actor, durationMs) {
 }
 
 // Never persist a signer's raw identity beyond its id/role in the audit args.
-function redact(args) {
-  if (!args || typeof args !== 'object') return {};
-  const copy = Object.assign({}, args);
+// Stamps the bound capability/audience (the authority the call ran under) into a
+// dedicated `_rbac` envelope so audit consumers read it without colliding with
+// real tool arguments.
+function redact(args, meta) {
+  const copy = (args && typeof args === 'object') ? Object.assign({}, args) : {};
   if (copy.signer && typeof copy.signer === 'object') {
     copy.signer = { id: copy.signer.id, kind: copy.signer.kind, role: copy.signer.role };
+  }
+  if (meta && (meta.capability || meta.audience)) {
+    copy._rbac = { capability: meta.capability || null, audience: meta.audience || null };
   }
   return copy;
 }
 
-module.exports = { TOOLS, listToolDefs, isAllowed, runTool };
+module.exports = { TOOLS, listToolDefs, isAllowed, requiredCapabilityFor, runTool };

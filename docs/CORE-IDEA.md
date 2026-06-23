@@ -4,7 +4,7 @@
 > **Status:** FORMATION (artifact 1 of 7). **Read order:** CORE-IDEA → PURPOSE → DESIGN → COST-MODEL → IMPLEMENTATION-PLAN → DEPLOYMENT → IMPLEMENTATION-TRACKER.csv.
 > **Authoring discipline:** every factual claim is anchored to the authoritative design — the IP white paper at `e:/apps/vosj/site/whitepaper.html` (cited by section id, e.g. §5/§9/§12/§14/§15) — and to this repo. Every number that is not in the white paper is marked `[ASSUMPTION]`. No fabricated metrics.
 > **Binding foundation:** the white paper (authoritative design) + the Luca *App / Game / Big-Task Formation Standard* (`e:/apps/Luca-express-prod/CLAUDE.md`). The locked invariants below are not settings — they are laws of the product, drawn from the white paper's structural guarantees (§6.1, §7, §12, §13, §14.1) and the CE program positioning.
-> **Owner:** Gus IT LLC. **License:** Business Source License 1.1 (`BUSL-1.1`), converting to a GPL-compatible Change License on the Change Date.
+> **Owner:** Gus IT LLC. Original creator & author: **Gustavo Assuncao**. **License:** Apache License 2.0 (`Apache-2.0`) — permissive, with an explicit patent grant; creator attribution propagates via the `NOTICE` file.
 
 ---
 
@@ -69,7 +69,7 @@ Work is dispatched through an **MCP Hub** (JSON-RPC 2.0; `stdio` + Streamable HT
 
 ## 5. What makes it different
 
-1. **Open-source and self-hosted, not a vendor's SaaS.** Source-available under **BSL 1.1**; runs entirely on the operator's own cluster, local-first, no account required, no data leaves the operator's tenant.
+1. **Open-source and self-hosted, not a vendor's SaaS.** Open source under **Apache-2.0**; runs entirely on the operator's own cluster, local-first, no account required, no data leaves the operator's tenant.
 2. **The letters are the engine.** V·O·S·J is a literal finite state machine, not branding (Claim 1) — the product *is* its governance.
 3. **Methodology is data, not code.** A data-driven framework template engine lets a consultant **select / clone / create** a methodology (CAF flagship, factory-style, cloned, or custom); signing, gate persistence, oversight roles, and RBAC are reused unchanged (Claim 2, §8).
 4. **Disposition is a typed contract, not advice.** The 7-R engine treats each workload's disposition as a gate *precondition*: the kickoff gate cannot pass until every in-scope workload carries one, and the plan selects runbook + executor *strictly* from it (Claim 3, §7).

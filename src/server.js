@@ -83,6 +83,8 @@ async function createApp() {
 
   // Optional feature modules (built by other agents). Order: API, then MCP.
   mountOptional('./api/routes', app, ctx);
+  mountOptional('./api/template-routes', app, ctx);
+  mountOptional('./api/evidence-routes', app, ctx);
   mountOptional('./api/gaps', app, ctx);
   mountOptional('./mcp/server', app, ctx);
 

@@ -2,7 +2,7 @@
   "name": "vosj-ce",
   "version": "0.1.0",
   "description": "Vosj Community Edition — open-source, self-hosted, AI-native application-migration & replatforming engine.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "commonjs",
   "engines": {
     "node": ">=20"

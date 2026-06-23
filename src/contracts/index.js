@@ -81,6 +81,20 @@ class StateStore {
   // store; the engine treats their absence as "no waiver available" (fail-closed).
   async listWaivers(filter) { throw notImplemented('StateStore', 'listWaivers'); }
   async saveWaiver(waiver) { throw notImplemented('StateStore', 'saveWaiver'); }
+
+  // Credential vault (see src/vault/vault.js). Optional on a store; the vault keeps
+  // a pure in-memory mirror when absent. Persists ciphertext ONLY — never plaintext.
+  async putCredential(record) { throw notImplemented('StateStore', 'putCredential'); }
+  async getCredential(ref) { throw notImplemented('StateStore', 'getCredential'); }
+
+  // Framework templates (§8.2, see src/engine/template-store.js). Optional on a
+  // store; template-store falls back to filesystem-seeded templates when absent.
+  // body persists the COMPILED phases/gates/states as JSONB (additive, no fork).
+  async listTemplatesDb(filter) { throw notImplemented('StateStore', 'listTemplatesDb'); }
+  async getTemplateDb(id) { throw notImplemented('StateStore', 'getTemplateDb'); }
+  async saveTemplateDb(template) { throw notImplemented('StateStore', 'saveTemplateDb'); }
+  async listFrameworkRoles(templateId) { throw notImplemented('StateStore', 'listFrameworkRoles'); }
+  async saveFrameworkRole(role) { throw notImplemented('StateStore', 'saveFrameworkRole'); }
 }
 
 module.exports = { Connector, Executor, GateSigner, AssessmentProvider, StateStore };
