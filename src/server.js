@@ -83,6 +83,7 @@ async function createApp() {
 
   // Optional feature modules (built by other agents). Order: API, then MCP.
   mountOptional('./api/routes', app, ctx);
+  mountOptional('./api/gaps', app, ctx);
   mountOptional('./mcp/server', app, ctx);
 
   // Static UI at '/'. Safe even if public/ has no files yet.

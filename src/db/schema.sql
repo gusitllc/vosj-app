@@ -121,3 +121,28 @@ CREATE INDEX IF NOT EXISTS vosj_workloads_wave_idx ON vosj.workloads (wave_id);
 CREATE INDEX IF NOT EXISTS vosj_ledger_ts_idx ON vosj.ledger (ts);
 CREATE INDEX IF NOT EXISTS vosj_tool_log_ts_idx ON vosj.tool_log (ts);
 CREATE INDEX IF NOT EXISTS vosj_orders_status_idx ON vosj.orders (status, created_at);
+
+-- Implementation gap tracker (whitepaper claim -> code status + work progress +
+-- the virtual persona assigned to execute it). Seeded from src/db/gaps-seed.json
+-- on first boot; an engineer tracks AI-implementation progress here (live at
+-- /progress.html, edited via PATCH /api/gaps/:id).
+CREATE TABLE IF NOT EXISTS vosj.gaps (
+  id           SERIAL PRIMARY KEY,
+  area         TEXT NOT NULL,
+  wp_section   TEXT,
+  claim        TEXT NOT NULL,
+  wp_status    TEXT,           -- vs whitepaper: implemented|partial|missing|divergent|aspirational
+  severity     TEXT,           -- none|minor|major|critical
+  scope        TEXT,           -- CE | EE
+  evidence     TEXT,
+  work_status  TEXT NOT NULL DEFAULT 'todo',   -- todo|in_progress|done|ee_deferred|wont_fix
+  pct_complete INT  NOT NULL DEFAULT 0,
+  assignee     TEXT,           -- the virtual persona who executes this task
+  validator    TEXT,
+  priority     INT  NOT NULL DEFAULT 5,         -- 1 critical .. 9 trivial
+  notes        TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS vosj_gaps_status_idx ON vosj.gaps (work_status);
+CREATE INDEX IF NOT EXISTS vosj_gaps_assignee_idx ON vosj.gaps (assignee);

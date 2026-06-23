@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<!-- public/progress.html — Vosj Implementation Progress tracker.
+     A LIVE board an engineer uses to drive the AI-implementation of Vosj against
+     its whitepaper: every whitepaper claim (vosj.gaps) is mapped to code, scored
+     for status vs the whitepaper (wp_status) and tracked as work (work_status +
+     pct_complete + assignee). Reads GET /api/gaps and renders an overall summary,
+     a per-area breakdown, and a filterable/sortable claim table whose work_status,
+     pct_complete and assignee cells PATCH /api/gaps/:id inline.
+     Vanilla JS + fetch + DOM only — NO framework, NO CDN. Every server-supplied
+     value passes through esc() before it touches the DOM (XSS). It reuses the
+     proven app.js helper PATTERNS ($, esc, toast, token, api/apiGet) verbatim. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Vosj — Implementation Progress</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Pre-auth gate (copied from index.html): until a token is entered, show ONLY a
+       brief intro + the token field — the board stays hidden behind body.locked. */
+    #gate { display: none; }
+    body.locked { overflow: hidden; }
+    body.locked > header,
+    body.locked > .health-strip,
+    body.locked > main,
+    body.locked > footer { display: none !important; }
+    body.locked #gate {
+      display: flex; position: fixed; inset: 0; z-index: 50; padding: 24px;
+      align-items: center; justify-content: center; background: var(--navy, #0E2235);
+    }
+    .gate-card {
+      max-width: 460px; text-align: center; background: var(--navy-2, #14304a);
+      border: 1px solid var(--line, #1b3b59); border-radius: 12px; padding: 32px 28px;
+    }
+    .gate-card .letters { font-size: 22px; letter-spacing: 2px; color: var(--teal-2, #14b3ac); font-weight: 700; }
+    .gate-card h1 { margin: 10px 0 6px; font-size: 20px; color: var(--ink, #e8eef3); }
+    .gate-card p { margin: 0; color: var(--muted, #9fb3c8); font-size: 14px; line-height: 1.55; }
+    .gate-row { display: flex; gap: 8px; margin: 18px 0 8px; }
+    .gate-row input { flex: 1; padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line, #1b3b59); background: var(--navy, #0E2235); color: var(--ink, #e8eef3); }
+    .gate-row button { padding: 10px 18px; border-radius: 6px; border: 0; background: var(--teal, #14b3ac); color: #04221f; font-weight: 700; cursor: pointer; }
+    .gate-hint { font-size: 12px; color: var(--muted, #9fb3c8); }
+
+    /* universal cross-page nav (same on index/intake/app) */
+    .vosj-nav { display: flex; gap: 4px; align-items: center; margin-left: 14px; flex-wrap: wrap; }
+    .vosj-nav a { text-decoration: none; color: var(--muted, #9fb3c8); font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: 6px; }
+    .vosj-nav a:hover { color: var(--ink, #e8eef3); background: var(--navy-3, #1b3b59); }
+    .vosj-nav a.active { color: var(--teal-2, #14b3ac); background: var(--navy-3, #1b3b59); }
+
+    /* ---- progress-specific bits only (everything else reuses styles.css) ---- */
+
+    /* the reusable progress bar — a filled track; colour set per-element inline */
+    .pbar { position: relative; height: 10px; border-radius: 6px; background: var(--chip); overflow: hidden; }
+    .pbar > span { position: absolute; inset: 0 auto 0 0; display: block; border-radius: 6px; background: var(--teal); transition: width .25s ease; }
+    .pbar.bar-ok > span { background: var(--ok); }
+    .pbar.bar-warn > span { background: var(--warn); }
+    .pbar.bar-bad > span { background: var(--bad); }
+    .pbar-lg { height: 16px; }
+
+    /* overall summary block */
+    .overall { display: flex; flex-direction: column; gap: 10px; }
+    .overall .ohead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+    .overall .opct { font-size: 28px; font-weight: 800; color: var(--ink); }
+    .overall .osub { color: var(--muted); font-size: 13px; }
+    .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+    .chip.dim { opacity: 0.5; }
+    .chip .c-n { color: var(--ink); font-weight: 700; }
+
+    /* per-area breakdown — a collapsible row per area */
+    .area { border: 1px solid var(--line); border-radius: 8px; margin: 6px 0; background: var(--navy-3); }
+    .area .ahead { display: grid; grid-template-columns: 1fr 160px 220px; gap: 12px; align-items: center; padding: 9px 12px; cursor: pointer; }
+    .area .aname { font-weight: 700; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    .area .aname .caret { color: var(--muted); font-size: 10px; transition: transform .15s ease; }
+    .area.open .aname .caret { transform: rotate(90deg); }
+    .area .acounts { font-size: 11px; color: var(--muted); text-align: right; }
+    .area .abody { display: none; padding: 0 12px 10px; }
+    .area.open .abody { display: block; }
+    .area .abody ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .area .abody li { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+    .area .abody li .li-claim { color: var(--ink); flex: 1; }
+
+    /* the claim table — keep cells compact; editable inputs are slim */
+    .gaptable td .ed-status, .gaptable td .ed-pct, .gaptable td .ed-assignee { font-size: 12px; padding: 4px 6px; }
+    .gaptable td .ed-pct { width: 64px; }
+    .gaptable td .ed-assignee { width: 130px; }
+    .gaptable .claim-cell { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gaptable tr.ws-done { background: rgba(46, 194, 138, 0.06); }
+    .gaptable tr.ws-ee_deferred { opacity: 0.55; }
+    .gaptable tr.sev-critical td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+
+    /* filter bar reuses .form-row/.field; just keep the search a touch wider */
+    .filters .field input.fsearch { min-width: 220px; }
+    .auto-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .auto-row input { width: auto; }
+
+    @media (max-width: 768px) {
+      .area .ahead { grid-template-columns: 1fr; gap: 6px; }
+      .area .acounts { text-align: left; }
+    }
+  </style>
+</head>
+<body class="locked">
+  <!-- pre-auth gate (shown until a token is entered; hidden once authed) -->
+  <section id="gate">
+    <div class="gate-card">
+      <div class="letters">V·O·S·J</div>
+      <h1>Implementation Progress</h1>
+      <p>Track the AI-implementation of Vosj against its whitepaper — every claim
+        mapped to code, scored vs the whitepaper, and driven to done. Enter your
+        access token to continue.</p>
+      <div class="gate-row">
+        <input id="gateToken" type="password" placeholder="Access token (Bearer)" autocomplete="off" />
+        <button id="gateGo" type="button">Continue</button>
+      </div>
+      <p class="gate-hint">Your token is stored only in this browser.</p>
+    </div>
+  </section>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
+      <div class="sub">Implementation Progress — vs Whitepaper</div>
+    </div>
+    <nav class="vosj-nav">
+      <a href="index.html">Command Center</a>
+      <a href="intake.html">Intake</a>
+      <a href="app.html">Board</a>
+      <a href="progress.html" class="active">Progress</a>
+      <a href="https://seats.vosj.com">Seat Manager</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="token-box">
+      <label for="token" style="color:var(--muted);font-size:12px">Bearer</label>
+      <input id="token" type="password" placeholder="AUTH_TOKEN (blank = open/localhost)" autocomplete="off" />
+      <button class="ghost" id="saveToken">Save</button>
+      <button class="ghost" id="refreshAll">Refresh</button>
+      <button class="ghost" id="logout" type="button">Log out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===================== OVERALL SUMMARY ===================== -->
+    <section class="card" id="summaryCard">
+      <h2>
+        <span>Overall Progress</span>
+        <span class="kv" id="summaryMeta"></span>
+      </h2>
+      <p class="hint">% of items done out of all non-EE-deferred claims. EE-deferred items are
+        excluded from the denominator (they are intentionally out of Community-Edition scope).</p>
+      <div class="overall" id="overall"><div class="empty">Loading progress&hellip;</div></div>
+    </section>
+
+    <!-- ===================== PER-AREA BREAKDOWN ===================== -->
+    <section class="card" id="areaCard">
+      <h2><span>By Area</span></h2>
+      <p class="hint">Average completion per area (click an area to reveal its claims).</p>
+      <div id="areaList"><div class="empty">Loading areas&hellip;</div></div>
+    </section>
+
+    <!-- ===================== CLAIM TABLE ===================== -->
+    <section class="card" id="tableCard">
+      <h2>
+        <span>Claims</span>
+        <span class="kv" id="tableCount"></span>
+      </h2>
+      <p class="hint">Edit a row's <b>work status</b>, <b>% complete</b> (blur / Enter) or
+        <b>assignee</b> (blur / Enter) to save it instantly (PATCH /api/gaps/:id).</p>
+
+      <div class="form-row filters">
+        <div class="field">
+          <label for="fSearch">Search claim</label>
+          <input id="fSearch" class="fsearch" placeholder="free text&hellip;" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="fWork">Work status</label>
+          <select id="fWork"><option value="">(all)</option></select>
+        </div>
+        <div class="field">
+          <label for="fSeverity">Severity</label>
+          <select id="fSeverity"><option value="">(all)</option></select>
+        </div>
+        <div class="field">
+          <label for="fArea">Area</label>
+          <select id="fArea"><option value="">(all)</option></select>
+        </div>
+        <div class="field">
+          <label for="fAssignee">Assignee</label>
+          <input id="fAssignee" placeholder="name&hellip;" autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="fSort">Sort by</label>
+          <select id="fSort">
+            <option value="priority">priority</option>
+            <option value="severity">severity</option>
+            <option value="pct_complete">% complete</option>
+            <option value="area">area</option>
+            <option value="work_status">work status</option>
+          </select>
+        </div>
+        <button class="ghost" id="clearFilters" type="button">Clear</button>
+        <label class="auto-row"><input id="autoRefresh" type="checkbox" /> Auto-refresh 30s</label>
+      </div>
+
+      <div class="table-wrap">
+        <table class="gaptable">
+          <thead>
+            <tr>
+              <th>Claim</th><th>Sev</th><th>Scope</th><th>WP</th>
+              <th>Work status</th><th>% done</th><th>Assignee</th><th>Validator</th>
+            </tr>
+          </thead>
+          <tbody id="gapsBody"><tr><td colspan="8" class="empty">Loading claims&hellip;</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer>Vosj Community Edition &mdash; self-hosted, bring-your-own-AI migration engine. The execution moat is Enterprise.</footer>
+  <div id="toast"></div>
+
+  <script src="progress.js"></script>
+</body>
+</html>
