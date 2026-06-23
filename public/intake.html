@@ -44,6 +44,12 @@
     .gate-row button { padding: 10px 18px; border-radius: 6px; border: 0; background: var(--teal, #14b3ac); color: #04221f; font-weight: 700; cursor: pointer; }
     .gate-hint { font-size: 12px; color: var(--muted, #9fb3c8); }
 
+    /* universal cross-page nav (same on index/intake/app) */
+    .vosj-nav { display: flex; gap: 4px; align-items: center; margin-left: 14px; flex-wrap: wrap; }
+    .vosj-nav a { text-decoration: none; color: var(--muted, #9fb3c8); font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: 6px; }
+    .vosj-nav a:hover { color: var(--ink, #e8eef3); background: var(--navy-3, #1b3b59); }
+    .vosj-nav a.active { color: var(--teal-2, #14b3ac); background: var(--navy-3, #1b3b59); }
+
     /* ---- wizard-specific bits only (everything else reuses styles.css) ---- */
     .wiz { max-width: 820px; margin: 0 auto; }
 
@@ -172,14 +178,20 @@
       <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
       <div class="sub">Intake — Plot the Voyage</div>
     </div>
+    <nav class="vosj-nav">
+      <a href="index.html">Command Center</a>
+      <a href="intake.html" class="active">Intake</a>
+      <a href="app.html">Board</a>
+      <a href="https://seats.vosj.com">Seat Manager</a>
+    </nav>
     <div class="spacer"></div>
-    <a href="app.html" class="ghost" style="text-decoration:none;display:inline-flex;align-items:center;padding:7px 12px;border-radius:6px;border:1px solid var(--line);color:var(--ink);font-weight:600;font-size:13px">Command Center &rarr;</a>
     <label class="advtoggle"><input id="advToggle" type="checkbox" /> Show advanced</label>
     <!-- token input mirrored to localStorage (same id contract as app.js) -->
     <div class="token-box">
       <label for="token" style="color:var(--muted);font-size:12px">Bearer</label>
       <input id="token" type="password" placeholder="AUTH_TOKEN" autocomplete="off" />
       <button class="ghost" id="saveToken">Save</button>
+      <button class="ghost" id="logout" type="button">Log out</button>
     </div>
   </header>
 

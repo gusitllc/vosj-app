@@ -118,6 +118,8 @@ function seatSecretSpec(i) {
       DEVSTATION_WORKER_ENABLED: 'false', VOSJ_SEAT_MODE: 'unassigned',
       CLAUDE_MODEL: DS_CLAUDE_MODEL, CLAUDE_FALLBACK_MODEL: DS_CLAUDE_FALLBACK,
       CLAUDE_CODE_OAUTH_TOKEN: '', ANTHROPIC_API_KEY: '',
+      // Extension policy (empty = install nothing; the Seat Manager "Push" fills these).
+      VOSJ_SEAT_TIER: 'none', CODE_SERVER_EXTENSIONS: '', CODE_SERVER_EXT_POLICY_VERSION: '0',
     },
   };
 }
@@ -137,7 +139,7 @@ function seatDeploymentSpec(i) {
           securityContext: { runAsNonRoot: false, seccompProfile: { type: 'RuntimeDefault' } },
           imagePullSecrets: ACR_PULL_SECRET ? [{ name: ACR_PULL_SECRET }] : [],
           containers: [{
-            name: 'code-server', image: DEVSTATION_IMAGE, imagePullPolicy: 'IfNotPresent',
+            name: 'code-server', image: DEVSTATION_IMAGE, imagePullPolicy: 'Always',
             args: ['--bind-addr', `0.0.0.0:${DEVSTATION_PORT}`, '/home/coder/project'],
             envFrom: [{ secretRef: { name: seatSecret(i) } }],
             ports: [{ name: 'http', containerPort: DEVSTATION_PORT }],
@@ -187,6 +189,26 @@ async function listSeatIds() {
     .sort((a, b) => a - b);
 }
 
+// Detect which seats the cluster CANNOT schedule (Pending / Unschedulable due to
+// insufficient resources) — so the UI can auto-warn when a scale-up won't fit.
+async function seatSchedulingMap() {
+  const podsColl = `/api/v1/namespaces/${NAMESPACE}/pods`;
+  const r = await kube('GET', `${podsColl}?labelSelector=${encodeURIComponent(SEAT_SELECTOR)}`);
+  const items = (r.json && r.json.items) || [];
+  const map = {};
+  for (const p of items) {
+    const labels = (p.metadata && p.metadata.labels) || {};
+    const m = /^devstation-(\d+)$/.exec(labels['app.kubernetes.io/instance'] || '');
+    if (!m) continue;
+    const conds = (p.status && p.status.conditions) || [];
+    const sched = conds.find((c) => c.type === 'PodScheduled');
+    if (sched && sched.status === 'False' && sched.reason === 'Unschedulable') {
+      map[parseInt(m[1], 10)] = sched.message || 'insufficient cluster resources';
+    }
+  }
+  return map;
+}
+
 const ok2xx = (s) => s >= 200 && s < 300;
 
 // Create a seat's Secret + Deployment + Service when absent (idempotent; 409 ok).
@@ -231,6 +253,78 @@ async function scaleSeats(target) {
   return { created, removed };
 }
 
+// --- extension policy (per-tier, Open-VSX-clean only) ------------------------
+// One ConfigMap `devstation-extension-policy` is the source of truth. On "Push",
+// the resolved id[@version] list lands in the seat's CODE_SERVER_EXTENSIONS (-env
+// Secret) and the devstation entrypoint installs it from Open VSX on boot. Every
+// item is license-clean — NO Marketplace-only / paid items (e.g. Copilot).
+const POLICY_CM = 'devstation-extension-policy';
+const cmPath = (name) => `/api/v1/namespaces/${NAMESPACE}/configmaps/${encodeURIComponent(name)}`;
+const cmColl = `/api/v1/namespaces/${NAMESPACE}/configmaps`;
+const EXT_TIERS = ['none', 'beginner', 'intermediate', 'advanced'];
+
+const ext = (id, pin) => ({ id, version: '', registry: 'open-vsx', pin: pin || 'minor' });
+const BEGINNER_EXT = [
+  ext('ms-python.python', 'exact'), ext('dbaeumer.vscode-eslint'), ext('esbenp.prettier-vscode'),
+  ext('redhat.vscode-yaml'), ext('eamodio.gitlens'), ext('humao.rest-client'),
+];
+const INTERMEDIATE_EXT = BEGINNER_EXT.concat([
+  ext('ms-kubernetes-tools.vscode-kubernetes-tools', 'exact'), ext('ms-azuretools.vscode-docker', 'exact'),
+  ext('ms-azuretools.vscode-azureresourcegroups', 'exact'), ext('ms-azuretools.vscode-bicep', 'exact'),
+  ext('jeanp413.open-remote-ssh', 'exact'),
+]);
+const ADVANCED_EXT = INTERMEDIATE_EXT.concat([ext('anthropic.claude-code', 'exact')]);
+const DEFAULT_POLICY = {
+  version: 1,
+  tiers: {
+    beginner: { extensions: BEGINNER_EXT },
+    intermediate: { extensions: INTERMEDIATE_EXT },
+    advanced: { extensions: ADVANCED_EXT },
+  },
+};
+
+// Read the policy CM; fall back to the built-in default until one is saved.
+async function readPolicy() {
+  const r = await kube('GET', cmPath(POLICY_CM));
+  if (r.status === 200 && r.json && r.json.data && r.json.data['policy.json']) {
+    try { return JSON.parse(r.json.data['policy.json']); } catch (_) { /* fall through */ }
+  }
+  return DEFAULT_POLICY;
+}
+
+// Create (POST) or update (merge-patch) the policy CM.
+async function writePolicy(policy) {
+  const ex = await kube('GET', cmPath(POLICY_CM));
+  if (ex.status === 200) {
+    const r = await kube('PATCH', cmPath(POLICY_CM), { data: { 'policy.json': JSON.stringify(policy) } }, 'application/merge-patch+json');
+    if (!ok2xx(r.status)) throw httpError(502, `policy update failed (HTTP ${r.status})`);
+  } else {
+    const cm = {
+      apiVersion: 'v1', kind: 'ConfigMap',
+      metadata: { name: POLICY_CM, namespace: NAMESPACE, labels: { 'app.kubernetes.io/part-of': 'vosj-poc' } },
+      data: { 'policy.json': JSON.stringify(policy) },
+    };
+    const r = await kube('POST', cmColl, cm);
+    if (!ok2xx(r.status) && r.status !== 409) throw httpError(502, `policy create failed (HTTP ${r.status})`);
+  }
+}
+
+// Resolve a tier -> the comma-separated `id[@version]` list to install.
+function resolveTierCsv(policy, tier) {
+  if (tier === 'none') return '';
+  const t = policy && policy.tiers && policy.tiers[tier];
+  const exts = (t && Array.isArray(t.extensions)) ? t.extensions : [];
+  return exts.map((e) => (e.version ? `${e.id}@${e.version}` : e.id)).join(',');
+}
+
+function buildExtensionPatch(tier, csv, policyVersion) {
+  return { data: {
+    VOSJ_SEAT_TIER: b64enc(tier),
+    CODE_SERVER_EXTENSIONS: b64enc(csv),
+    CODE_SERVER_EXT_POLICY_VERSION: b64enc(String(policyVersion)),
+  } };
+}
+
 // --- seat state read ---------------------------------------------------------
 // Derive a seat's view from its Secret + Deployment. NEVER returns a credential —
 // only mode, a last-4 keyHint, and booleans.
@@ -258,6 +352,8 @@ async function readSeat(id) {
     seat.assigned = seat.mode !== 'unassigned';
     seat.keyHint = keyHintFrom(data, seat.mode);
     seat.workerEnabled = b64dec(data.DEVSTATION_WORKER_ENABLED) === 'true';
+    seat.tier = b64dec(data.VOSJ_SEAT_TIER) || 'none';
+    seat.extPolicyVersion = b64dec(data.CODE_SERVER_EXT_POLICY_VERSION) || '0';
   }
   const dep = await kube('GET', deployPath(`devstation-${id}`));
   if (dep.status === 200 && dep.json && dep.json.status) {
@@ -358,8 +454,20 @@ function serveStatic(req, res) {
 // --- route handlers ----------------------------------------------------------
 async function handleListSeats(_req, res) {
   const ids = await listSeatIds();
-  const seats = await Promise.all(ids.map(readSeat));
-  sendJson(res, 200, { ok: true, seats, count: ids.length, max: SEAT_MAX, default: SEAT_DEFAULT });
+  const [seats, schedMap] = await Promise.all([
+    Promise.all(ids.map(readSeat)),
+    seatSchedulingMap(),
+  ]);
+  let unschedulable = 0;
+  for (const s of seats) {
+    if (schedMap[s.id]) { s.schedulable = false; s.scheduleReason = schedMap[s.id]; unschedulable += 1; }
+    else s.schedulable = true;
+  }
+  const capacityWarning = unschedulable > 0
+    ? `The cluster can't fit all ${ids.length} seats — ${unschedulable} unschedulable (insufficient resources). `
+      + 'Reduce the seat count or add cluster capacity.'
+    : '';
+  sendJson(res, 200, { ok: true, seats, count: ids.length, max: SEAT_MAX, default: SEAT_DEFAULT, unschedulable, capacityWarning });
 }
 
 // POST /api/scale { count } — provision/de-provision seats to match (1..SEAT_MAX).
@@ -371,6 +479,47 @@ async function handleScale(req, res) {
   if (!(target >= 1 && target <= SEAT_MAX)) throw httpError(400, `count must be between 1 and ${SEAT_MAX}`);
   const { created, removed } = await scaleSeats(target);
   sendJson(res, 200, { ok: true, count: target, max: SEAT_MAX, created, removed });
+}
+
+// GET /api/ext-policy — the current extension policy + the tier names.
+async function handleGetPolicy(_req, res) {
+  const policy = await readPolicy();
+  sendJson(res, 200, { ok: true, policy, tiers: EXT_TIERS });
+}
+
+// PUT /api/ext-policy { policy } — save the edited policy (bumps the version).
+async function handlePutPolicy(req, res) {
+  const raw = await readBody(req);
+  let body;
+  try { body = raw ? JSON.parse(raw) : {}; } catch (_) { throw httpError(400, 'invalid JSON body'); }
+  const policy = (body && body.policy) || body;
+  if (!policy || typeof policy !== 'object' || !policy.tiers) throw httpError(400, 'policy.tiers is required');
+  const cur = await readPolicy();
+  policy.version = (parseInt(cur.version, 10) || 0) + 1;
+  await writePolicy(policy);
+  sendJson(res, 200, { ok: true, version: policy.version });
+}
+
+// POST /api/seats/:id/extensions { tier } — push the tier's extensions to a seat
+// (write the -env Secret + restart, reusing the assign path).
+async function handleExtensions(req, res, id) {
+  const raw = await readBody(req);
+  let body;
+  try { body = raw ? JSON.parse(raw) : {}; } catch (_) { throw httpError(400, 'invalid JSON body'); }
+  const tier = String(body.tier || '').trim();
+  if (!EXT_TIERS.includes(tier)) throw httpError(400, 'tier must be one of: ' + EXT_TIERS.join(', '));
+  if (!(id >= 1 && id <= SEAT_MAX)) throw httpError(400, `invalid seat id (1..${SEAT_MAX})`);
+  const policy = await readPolicy();
+  const csv = resolveTierCsv(policy, tier);
+  const sp = await kube('PATCH', secretsPath(seatSecret(id)),
+    buildExtensionPatch(tier, csv, policy.version), 'application/merge-patch+json');
+  if (sp.status < 200 || sp.status >= 300) {
+    throw httpError(sp.status === 404 ? 404 : 502, `seat ${id} extension patch failed (HTTP ${sp.status})`);
+  }
+  const restartPatch = { spec: { template: { metadata: { annotations: { 'vosj.seat-manager/restartedAt': new Date().toISOString() } } } } };
+  const dp = await kube('PATCH', deployPath(seatName(id)), restartPatch, 'application/strategic-merge-patch+json');
+  if (dp.status < 200 || dp.status >= 300) throw httpError(502, `seat ${id} restart failed (HTTP ${dp.status})`);
+  sendJson(res, 200, { ok: true, id, tier, policyVersion: policy.version, extensions: csv ? csv.split(',') : [] });
 }
 
 function validateAssign(id, body) {
@@ -404,8 +553,12 @@ async function route(req, res) {
 
     if (req.method === 'GET' && url === '/api/seats') { await handleListSeats(req, res); return; }
     if (req.method === 'POST' && url === '/api/scale') { await handleScale(req, res); return; }
+    if (req.method === 'GET' && url === '/api/ext-policy') { await handleGetPolicy(req, res); return; }
+    if (req.method === 'PUT' && url === '/api/ext-policy') { await handlePutPolicy(req, res); return; }
     const m = url.match(/^\/api\/seats\/(\d+)\/assign$/);
     if (req.method === 'POST' && m) { await handleAssign(req, res, parseInt(m[1], 10)); return; }
+    const me = url.match(/^\/api\/seats\/(\d+)\/extensions$/);
+    if (req.method === 'POST' && me) { await handleExtensions(req, res, parseInt(me[1], 10)); return; }
     sendJson(res, 404, { ok: false, error: 'no such route' });
     return;
   }
@@ -428,7 +581,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   // Boot log carries config posture but NEVER the admin key or SA token.
-  console.log(`[seat-manager] listening :${PORT} ns=${NAMESPACE} seats=${SEAT_COUNT} adminKey=${ADMIN_KEY ? 'set' : 'MISSING(fail-closed)'}`);
+  console.log(`[seat-manager] listening :${PORT} ns=${NAMESPACE} seats=${SEAT_DEFAULT}/${SEAT_MAX} adminKey=${ADMIN_KEY ? 'set' : 'MISSING(fail-closed)'}`);
 });
 
 module.exports = { server };

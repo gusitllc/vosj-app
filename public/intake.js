@@ -640,6 +640,15 @@ function onGateGo() {
   startWizard();
 }
 
+// Log out: drop the stored token, clear both token fields, return to the gate.
+function onLogout() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) { /* no storage */ }
+  $('token').value = '';
+  $('gateToken').value = '';
+  document.body.classList.add('locked');
+  toast('Logged out', 'ok');
+}
+
 function setAdvanced(on) {
   document.body.classList.toggle('show-advanced', on);
   $('advToggle').checked = on;
@@ -655,6 +664,7 @@ function init() {
   loadToken();
   restoreDraft();
   $('saveToken').addEventListener('click', saveToken);
+  $('logout').addEventListener('click', onLogout);
   $('gateGo').addEventListener('click', onGateGo);
   $('gateToken').addEventListener('keydown', (e) => { if (e.key === 'Enter') onGateGo(); });
   $('advToggle').addEventListener('change', () => setAdvanced($('advToggle').checked));

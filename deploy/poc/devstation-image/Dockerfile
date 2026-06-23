@@ -30,5 +30,12 @@ RUN apt-get update \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
-# Back to the unprivileged code-server user; upstream ENTRYPOINT is preserved.
+# Extension-policy entrypoint: installs the seat's CODE_SERVER_EXTENSIONS (from
+# Open VSX) on boot, then execs the upstream code-server entrypoint. Args still
+# come from the Deployment ("$@"), so --bind-addr + PASSWORD behave as before.
+COPY entrypoint.sh /usr/local/bin/vosj-entrypoint.sh
+RUN chmod +x /usr/local/bin/vosj-entrypoint.sh
+
+# Back to the unprivileged code-server user.
 USER coder
+ENTRYPOINT ["/usr/local/bin/vosj-entrypoint.sh"]

@@ -39,6 +39,20 @@
     .scale-bar { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
     .scale-bar input { width: 84px; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--line, #1b3b59); background: var(--navy, #0E2235); color: var(--ink, #e8eef3); }
     .scale-bar button { padding: 7px 14px; border-radius: 6px; border: 0; background: var(--teal, #14b3ac); color: #04221f; font-weight: 700; cursor: pointer; }
+    .cap-warn { display: none; margin-top: 10px; padding: 10px 12px; border-radius: 6px; background: rgba(210,153,34,0.12); border: 1px solid var(--warn, #d29922); color: #f0d28a; font-size: 13px; }
+    .vosj-nav { display: flex; gap: 4px; align-items: center; margin-left: 14px; flex-wrap: wrap; }
+    .vosj-nav a { text-decoration: none; color: var(--muted, #9fb3c8); font-size: 13px; font-weight: 600; padding: 6px 10px; border-radius: 6px; }
+    .vosj-nav a:hover { color: var(--ink, #e8eef3); background: var(--navy-3, #1b3b59); }
+    .vosj-nav a.active { color: var(--teal-2, #14b3ac); background: var(--navy-3, #1b3b59); }
+    .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+    .tab { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--line, #1b3b59); background: var(--navy-2, #14304a); color: var(--muted, #9fb3c8); font-weight: 600; cursor: pointer; }
+    .tab.active { background: var(--teal, #14b3ac); color: #04221f; border-color: var(--teal, #14b3ac); }
+    .tier-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .tier-card { background: var(--navy-2, #14304a); border: 1px solid var(--line, #1b3b59); border-radius: 8px; padding: 12px; }
+    .tier-card h3 { margin: 0 0 2px; color: var(--ink, #e8eef3); font-size: 15px; }
+    .tier-card textarea { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 8px; border-radius: 6px; border: 1px solid var(--line, #1b3b59); background: var(--navy, #0E2235); color: var(--ink, #e8eef3); font-family: var(--mono, monospace); font-size: 12px; resize: vertical; }
+    .seat-tier { display: flex; gap: 6px; align-items: center; margin-top: 8px; }
+    .seat-tier select { flex: 1; padding: 6px; border-radius: 6px; border: 1px solid var(--line, #1b3b59); background: var(--navy, #0E2235); color: var(--ink, #e8eef3); }
   </style>
 </head>
 <body class="locked">
@@ -63,34 +77,71 @@
       <div class="letters"><span>V</span>·<span>O</span>·<span>S</span>·<span>J</span></div>
       <div class="sub">Seat Manager — devstation credentials</div>
     </div>
+    <nav class="vosj-nav">
+      <a href="https://demo.vosj.com/index.html">Command Center</a>
+      <a href="https://demo.vosj.com/intake.html">Intake</a>
+      <a href="https://demo.vosj.com/app.html">Board</a>
+      <a href="index.html" class="active">Seat Manager</a>
+    </nav>
     <div class="spacer"></div>
     <div class="key-box">
       <label for="adminKey">Admin key</label>
       <input id="adminKey" type="password" placeholder="X-Admin-Key" autocomplete="off" />
-      <button class="ghost" id="saveKey">Save</button>
-      <button class="ghost" id="refresh">Refresh</button>
+      <button class="ghost" id="saveKey" type="button">Save</button>
+      <button class="ghost" id="refresh" type="button">Refresh</button>
+      <button class="ghost" id="logout" type="button">Log out</button>
     </div>
   </header>
 
   <main>
-    <section class="intro">
-      <h1>Devstation seats</h1>
-      <p class="hint">
-        Each seat is a Deployment <code>devstation-&lt;i&gt;</code> fed by a per-seat
-        Secret <code>devstation-&lt;i&gt;-env</code>. Choose a mode, paste the matching
-        credential, and <b>Assign</b> — the Secret is written and the seat is restarted.
-        Keys are never echoed back; only the last 4 characters are shown as a hint.
-      </p>
-      <div class="scale-bar">
-        <label for="scaleCount">Seats</label>
-        <input id="scaleCount" type="number" min="1" max="50" step="1" />
-        <button id="scaleApply" type="button">Apply</button>
-        <span id="seatCount" class="hint"></span>
-      </div>
-    </section>
+    <div class="tabs">
+      <button id="tabSeats" class="tab active" type="button">Seats</button>
+      <button id="tabPolicy" class="tab" type="button">Extension Policy</button>
+    </div>
 
-    <div id="seats" class="seat-grid">
-      <div class="empty">Enter your admin key, then Refresh to load seats.</div>
+    <div id="seatsView">
+      <section class="intro">
+        <h1>Devstation seats</h1>
+        <p class="hint">
+          Each seat is a Deployment <code>devstation-&lt;i&gt;</code> fed by a per-seat
+          Secret <code>devstation-&lt;i&gt;-env</code>. Choose a mode, paste the matching
+          credential, and <b>Assign</b> — the Secret is written and the seat is restarted.
+          Keys are never echoed back; only the last 4 characters are shown as a hint.
+          Set a seat's extension <b>tier</b> and <b>Push</b> to install the policy's IDE extensions.
+        </p>
+        <div class="scale-bar">
+          <label for="scaleCount">Seats</label>
+          <input id="scaleCount" type="number" min="1" max="50" step="1" />
+          <button id="scaleApply" type="button">Apply</button>
+          <span id="seatCount" class="hint"></span>
+        </div>
+        <div id="capacityWarning" class="cap-warn"></div>
+      </section>
+
+      <div id="seats" class="seat-grid">
+        <div class="empty">Enter your admin key, then Refresh to load seats.</div>
+      </div>
+    </div>
+
+    <div id="policyView" style="display:none">
+      <section class="intro">
+        <h1>Extension policy</h1>
+        <p class="hint">
+          Per-tier IDE extensions pushed to seats. All install from <b>Open VSX</b>
+          (license-clean) — one per line: <code>publisher.name</code> or
+          <code>publisher.name@version</code>. Set a seat's tier on the <b>Seats</b>
+          tab, then <b>Push extensions</b>. <span id="policyVersion"></span>
+        </p>
+      </section>
+      <div class="tier-grid">
+        <div class="tier-card"><h3>Beginner</h3><p class="hint">read / edit / run safely</p><textarea id="extBeginner" rows="7" spellcheck="false"></textarea></div>
+        <div class="tier-card"><h3>Intermediate</h3><p class="hint">+ Kubernetes / Azure / infra</p><textarea id="extIntermediate" rows="11" spellcheck="false"></textarea></div>
+        <div class="tier-card"><h3>Advanced</h3><p class="hint">+ Claude Code IDE</p><textarea id="extAdvanced" rows="12" spellcheck="false"></textarea></div>
+      </div>
+      <div class="scale-bar">
+        <button id="savePolicy" type="button">Save policy</button>
+        <span id="policySaved" class="hint"></span>
+      </div>
     </div>
   </main>
 

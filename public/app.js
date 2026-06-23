@@ -281,6 +281,13 @@ function setChainBadge(badge, r) {
   badge.textContent = 'chain: BROKEN at seq ' + esc(v.brokenAt);
 }
 
+// Log out: drop the stored token, clear the field, land on the gated home.
+function onLogout() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) { /* no storage */ }
+  $('token').value = '';
+  window.location.href = 'index.html';
+}
+
 // --- Wiring ---
 async function refreshAll() {
   await Promise.all([loadHealth(), loadWaves(), loadDispositions(), loadLedger()]);
@@ -291,6 +298,7 @@ function init() {
   loadToken();
   $('saveToken').addEventListener('click', saveToken);
   $('refreshAll').addEventListener('click', refreshAll);
+  $('logout').addEventListener('click', onLogout);
   $('verifyChain').addEventListener('click', verifyChain);
   $('refreshLedger').addEventListener('click', loadLedger);
   refreshAll();

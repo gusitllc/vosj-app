@@ -90,6 +90,11 @@ ACR_PULL_SECRET="${ACR_PULL_SECRET:-}" \
 DEVSTATION_COUNT="$DEVSTATION_COUNT" \
   envsubst < "$MANIFEST" | $STRIP_PULL | kc apply -f -
 
+# The image tag is mutable (:poc) with pullPolicy Always; a re-apply with no pod
+# template change is a no-op (no new pod = the rebuilt image is never pulled), so
+# force a fresh ReplicaSet to re-pull the just-built image.
+kc -n "$NAMESPACE_DEV" rollout restart deployment/seat-manager >/dev/null 2>&1 || true
+
 # --- wait for rollout ---------------------------------------------------------
 log_info "waiting for seat-manager to become Ready"
 if kc -n "$NAMESPACE_DEV" rollout status "deployment/seat-manager" \

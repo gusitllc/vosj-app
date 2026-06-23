@@ -61,7 +61,9 @@ spec:
       containers:
         - name: code-server
           image: ${DEVSTATION_IMAGE}
-          imagePullPolicy: IfNotPresent
+          # Always: the mutable :poc tag is rebuilt (e.g. new extension entrypoint);
+          # a restart must re-pull. The lean image's changed layer is tiny (cached base).
+          imagePullPolicy: Always
           # code-server's upstream entrypoint takes these as code-server args.
           args:
             - "--bind-addr"

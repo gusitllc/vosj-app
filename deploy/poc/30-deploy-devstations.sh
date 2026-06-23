@@ -89,7 +89,10 @@ deploy_seat() {
       --from-literal=CLAUDE_MODEL="${DEVSTATION_CLAUDE_MODEL:-opus}" \
       --from-literal=CLAUDE_FALLBACK_MODEL="${DEVSTATION_CLAUDE_FALLBACK_MODEL:-sonnet}" \
       --from-literal=CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN:-}" \
-      --from-literal=ANTHROPIC_API_KEY=""
+      --from-literal=ANTHROPIC_API_KEY="" \
+      --from-literal=VOSJ_SEAT_TIER="none" \
+      --from-literal=CODE_SERVER_EXTENSIONS="" \
+      --from-literal=CODE_SERVER_EXT_POLICY_VERSION="0"
   fi
 
   # Render the manifest for this seat and apply it.

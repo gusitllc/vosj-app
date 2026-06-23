@@ -477,10 +477,20 @@ function onGateGo() {
   refreshAll();
 }
 
+// Log out: drop the stored token, clear both token fields, return to the gate.
+function onLogout() {
+  try { localStorage.removeItem(TOKEN_KEY); } catch (_) { /* no storage */ }
+  $('token').value = '';
+  $('gateToken').value = '';
+  document.body.classList.add('locked');
+  toast('Logged out', 'ok');
+}
+
 function init() {
   loadToken();
   $('saveToken').addEventListener('click', saveToken);
   $('refreshAll').addEventListener('click', refreshAll);
+  $('logout').addEventListener('click', onLogout);
   $('addWorkload').addEventListener('click', onAddWorkload);
   $('addWave').addEventListener('click', onAddWave);
   $('runReconcile').addEventListener('click', onReconcile);

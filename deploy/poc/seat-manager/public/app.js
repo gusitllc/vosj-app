@@ -76,9 +76,10 @@ function statusBadge(seat) {
   const assigned = seat.assigned
     ? '<span class="chip ok">assigned</span>'
     : '<span class="chip">unassigned</span>';
-  const ready = seat.ready
-    ? '<span class="chip ok">ready</span>'
-    : '<span class="chip bad">not ready</span>';
+  let ready;
+  if (seat.schedulable === false) ready = '<span class="chip bad">unschedulable</span>';
+  else if (seat.ready) ready = '<span class="chip ok">ready</span>';
+  else ready = '<span class="chip warn">starting</span>';
   return assigned + ' ' + ready;
 }
 
@@ -114,6 +115,20 @@ function seatCard(seat) {
     + '<label class="field-label" id="lbl-' + esc(seat.id) + '">' + esc(keyLabel(mode)) + '</label>'
     + '<input class="cred" type="password" autocomplete="off" placeholder="paste credential" data-seat="' + esc(seat.id) + '" />'
     + '<button class="assign" type="button" data-seat="' + esc(seat.id) + '">Assign</button>'
+    + tierRow(seat)
+    + '</div>';
+}
+
+// Per-seat extension tier selector + Push button.
+function tierRow(seat) {
+  const cur = seat.tier || 'none';
+  const opt = (v, label) => '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + label + '</option>';
+  return '<div class="seat-tier">'
+    + '<select class="tier-sel" data-seat="' + esc(seat.id) + '">'
+    + opt('none', 'No extensions') + opt('beginner', 'Beginner')
+    + opt('intermediate', 'Intermediate') + opt('advanced', 'Advanced')
+    + '</select>'
+    + '<button class="push small" type="button" data-seat="' + esc(seat.id) + '">Push ext</button>'
     + '</div>';
 }
 
@@ -127,6 +142,7 @@ async function loadSeats() {
     return;
   }
   updateScaleBar(r);
+  renderCapacityWarning(r);
   const seats = Array.isArray(r.seats) ? r.seats : [];
   if (!seats.length) { host.innerHTML = '<div class="empty">No seats yet — set a count above and Apply.</div>'; return; }
   host.innerHTML = seats.map(seatCard).join('');
@@ -166,10 +182,97 @@ async function onScaleApply() {
   await loadSeats();
 }
 
+// Auto capacity warning: the cluster can't schedule all requested seats.
+function renderCapacityWarning(r) {
+  const el = $('capacityWarning');
+  if (!el) return;
+  if (r.capacityWarning) { el.textContent = '⚠ ' + r.capacityWarning; el.style.display = 'block'; }
+  else { el.textContent = ''; el.style.display = 'none'; }
+}
+
+// Log out: clear the admin key and return to the gate.
+function onLogout() {
+  try { localStorage.removeItem(KEY_STORE); } catch (_) { /* no storage */ }
+  $('adminKey').value = '';
+  const gk = $('gateKey');
+  if (gk) gk.value = '';
+  document.body.classList.add('locked');
+}
+
+// --- extension policy tab ----------------------------------------------------
+function extToLines(exts) {
+  return (exts || []).map((e) => (e.version ? e.id + '@' + e.version : e.id)).join('\n');
+}
+function linesToExts(text) {
+  return String(text || '').split(/[\n,]+/).map((s) => s.trim()).filter(Boolean).map((s) => {
+    const at = s.lastIndexOf('@');
+    if (at > 0 && /^\d/.test(s.slice(at + 1))) {
+      return { id: s.slice(0, at), version: s.slice(at + 1), registry: 'open-vsx', pin: 'minor' };
+    }
+    return { id: s, version: '', registry: 'open-vsx', pin: 'minor' };
+  });
+}
+
+let loadedPolicy = null;
+async function loadPolicy() {
+  const r = await api('GET', '/api/ext-policy');
+  if (!r.ok) { toast('Load policy failed: ' + (r.error || 'error'), 'error'); return; }
+  loadedPolicy = r.policy || {};
+  const t = loadedPolicy.tiers || {};
+  $('extBeginner').value = extToLines((t.beginner || {}).extensions);
+  $('extIntermediate').value = extToLines((t.intermediate || {}).extensions);
+  $('extAdvanced').value = extToLines((t.advanced || {}).extensions);
+  const pv = $('policyVersion');
+  if (pv) pv.textContent = 'Policy v' + (loadedPolicy.version || '?') + ' · Open VSX only';
+}
+
+async function savePolicy() {
+  const policy = {
+    version: loadedPolicy ? loadedPolicy.version : 1,
+    tiers: {
+      beginner: { extensions: linesToExts($('extBeginner').value) },
+      intermediate: { extensions: linesToExts($('extIntermediate').value) },
+      advanced: { extensions: linesToExts($('extAdvanced').value) },
+    },
+  };
+  $('savePolicy').disabled = true;
+  const r = await api('PUT', '/api/ext-policy', { policy });
+  $('savePolicy').disabled = false;
+  if (!r.ok) { toast('Save failed: ' + (r.error || 'error'), 'error'); return; }
+  toast('Policy saved (v' + r.version + ')', 'ok');
+  const ps = $('policySaved'); if (ps) ps.textContent = 'Saved v' + r.version;
+  await loadPolicy();
+}
+
+function showTab(which) {
+  const seats = which === 'seats';
+  $('seatsView').style.display = seats ? '' : 'none';
+  $('policyView').style.display = seats ? 'none' : '';
+  $('tabSeats').classList.toggle('active', seats);
+  $('tabPolicy').classList.toggle('active', !seats);
+  if (!seats && !loadedPolicy) loadPolicy();
+}
+
+async function onPushExtensions(id, tier) {
+  toast('Pushing ' + tier + ' extensions to seat ' + id + '…', 'ok');
+  const r = await api('POST', '/api/seats/' + encodeURIComponent(id) + '/extensions', { tier });
+  if (!r.ok) { toast('Push failed: ' + (r.error || 'error'), 'error'); return; }
+  toast('Seat ' + id + ': ' + (r.extensions || []).length + ' extension(s) [' + tier + '] + restarting', 'ok');
+  await loadSeats();
+}
+
+function onPushClick(ev) {
+  const id = ev.currentTarget.getAttribute('data-seat');
+  const card = ev.currentTarget.closest('.seat-card');
+  const sel = card.querySelector('.tier-sel');
+  onPushExtensions(id, sel ? sel.value : 'none');
+}
+
 // --- interactions ---
 function bindCards() {
   document.querySelectorAll('.mode-btn').forEach((b) => b.addEventListener('click', onModeToggle));
   document.querySelectorAll('button.assign').forEach((b) => b.addEventListener('click', onAssign));
+  document.querySelectorAll('button.push').forEach((b) => b.addEventListener('click', onPushClick));
 }
 
 function onModeToggle(ev) {
@@ -220,6 +323,10 @@ function init() {
   $('gateGo').addEventListener('click', onGateGo);
   $('gateKey').addEventListener('keydown', (e) => { if (e.key === 'Enter') onGateGo(); });
   $('scaleApply').addEventListener('click', onScaleApply);
+  $('logout').addEventListener('click', onLogout);
+  $('tabSeats').addEventListener('click', () => showTab('seats'));
+  $('tabPolicy').addEventListener('click', () => showTab('policy'));
+  $('savePolicy').addEventListener('click', savePolicy);
   // Already have a key? Unlock straight to the seats; else show the gate.
   if (getKey()) { document.body.classList.remove('locked'); loadSeats(); }
 }
