@@ -13,7 +13,7 @@ const config = require('./config');
 const { Ledger } = require('./ledger/ledger');
 const { createStateStore } = require('./db/statestore');
 const { buildEngine } = require('./engine');
-const { DemoConnector } = require('./connectors/demo');
+const { buildConnectorMap, buildProviderRegistry } = require('./connectors');
 
 function log(level, msg, extra) {
   const line = `[${new Date().toISOString()}] ${level} ${msg}`;
@@ -33,10 +33,18 @@ async function buildContext() {
   const ledger = new Ledger({ store, config });
   const engine = buildEngine({ config, store, ledger });
 
-  const connectors = new Map();
-  connectors.set('demo', new DemoConnector());
+  // Use the code-level connector registry (demo + azure-arc + hyperv) instead of
+  // a single hardcoded demo — "extend, do not fork" (§16.1). The non-demo
+  // connectors are SAFE to register: they fail verify() closed until their SDK
+  // seams are wired, so they cannot produce a passing verified-before-Jump proof.
+  const connectors = buildConnectorMap();
 
-  return { config, engine, store, ledger, connectors, log };
+  // Capability-layer provider registry: the connector SET comes from code; the
+  // per-provider region/price metadata comes from config (config.providerRegistry,
+  // VOSJ_PROVIDER_REGISTRY). list()/get() expose the neutral control plane.
+  const providers = buildProviderRegistry(connectors, config);
+
+  return { config, engine, store, ledger, connectors, providers, log };
 }
 
 function mountHealth(app, ctx) {

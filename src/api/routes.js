@@ -33,6 +33,13 @@ function handler(ctx, fn) {
 
 function str(v) { return (v === undefined || v === null) ? '' : String(v); }
 
+// tenantOf(req) — the caller's tenant, resolved on the principal by requireAuth
+// (PKG-TENANT-ISOLATION, §14.3). Threaded into every store call so reads/writes are
+// isolated per tenant; defaults to the single CE tenant 'default'.
+function tenantOf(req) {
+  return (req.principal && req.principal.tenant) || 'default';
+}
+
 // Build the in-memory unit shape the engine expects from a stored workload row.
 // The store persists snake_case columns; reconcile/state-machine read camelCase.
 function unitFromWorkload(w) {
@@ -70,19 +77,20 @@ function mountTemplates(app, ctx, auth) {
 
 function mountWorkloads(app, ctx, auth) {
   app.get('/api/workloads', auth, handler(ctx, async (req, res) => {
-    const filter = req.query.waveId ? { waveId: str(req.query.waveId) } : {};
+    const filter = { tenantId: tenantOf(req) };
+    if (req.query.waveId) filter.waveId = str(req.query.waveId);
     ok(res, { workloads: await ctx.store.listWorkloads(filter) });
   }));
 
   app.post('/api/workloads', auth, requireCapability('migration:workload:write'),
     handler(ctx, async (req, res) => {
-      const w = buildWorkload(req.body || {});
+      const w = buildWorkload(req.body || {}, tenantOf(req));
       const saved = await ctx.store.saveWorkload(w);
       ok(res, { workload: saved });
     }));
 }
 
-function buildWorkload(body) {
+function buildWorkload(body, tenant) {
   const id = str(body.id).trim();
   const name = str(body.name).trim();
   if (!id) throw new Error('workload requires an id');
@@ -95,17 +103,18 @@ function buildWorkload(body) {
     wave_id: body.waveId ? str(body.waveId) : null,
     baseline_at: body.baselineAt ? str(body.baselineAt) : null,
     attributes: (body.attributes && typeof body.attributes === 'object') ? body.attributes : {},
+    tenant_id: tenant || 'default',
   };
 }
 
 function mountWaves(app, ctx, auth) {
-  app.get('/api/waves', auth, handler(ctx, async (_req, res) => {
-    ok(res, { waves: await ctx.store.listWaves({}) });
+  app.get('/api/waves', auth, handler(ctx, async (req, res) => {
+    ok(res, { waves: await ctx.store.listWaves({ tenantId: tenantOf(req) }) });
   }));
 
   app.post('/api/waves', auth, requireCapability('migration:wave:write'),
     handler(ctx, async (req, res) => {
-      const wave = buildWave(ctx, req.body || {});
+      const wave = buildWave(ctx, req.body || {}, tenantOf(req));
       const saved = await ctx.store.saveWave(wave);
       ok(res, { wave: saved });
     }));
@@ -114,7 +123,7 @@ function mountWaves(app, ctx, auth) {
     handler(ctx, transitionHandler(ctx)));
 }
 
-function buildWave(ctx, body) {
+function buildWave(ctx, body, tenant) {
   const id = str(body.id).trim();
   const name = str(body.name).trim();
   if (!id) throw new Error('wave requires an id');
@@ -130,6 +139,7 @@ function buildWave(ctx, body) {
     framework_template_id: templateId,
     framework_version: version,
     plan: (body.plan && typeof body.plan === 'object') ? body.plan : {},
+    tenant_id: tenant || 'default',
   };
 }
 
@@ -137,7 +147,8 @@ function buildWave(ctx, body) {
 // path. The human signer is supplied in the body; the engine rejects agent/self-sign.
 function transitionHandler(ctx) {
   return async (req, res) => {
-    const wave = await ctx.store.getWave(str(req.params.id));
+    const tenant = tenantOf(req);
+    const wave = await ctx.store.getWave(str(req.params.id), { tenantId: tenant });
     if (!wave) return fail(res, 404, 'wave not found');
     if (!wave.framework_template_id) {
       return fail(res, 400, 'wave has no pinned framework template to transition');
@@ -157,7 +168,8 @@ function transitionHandler(ctx) {
       evidence: Array.isArray(body.evidence) ? body.evidence : [],
       proof: body.proof || null,
     });
-    const saved = await ctx.store.saveWave(Object.assign({}, wave, { state: result.state }));
+    const saved = await ctx.store.saveWave(
+      Object.assign({}, wave, { state: result.state, tenant_id: tenant }));
     ok(res, { wave: saved, gate: result.gate, ledger: redactLedger(result.ledger) });
   };
 }
@@ -173,7 +185,7 @@ function buildSigner(raw) {
 
 function mountClassify(app, ctx, auth) {
   app.get('/api/classify/:workloadId', auth, handler(ctx, async (req, res) => {
-    const w = await ctx.store.getWorkload(str(req.params.workloadId));
+    const w = await ctx.store.getWorkload(str(req.params.workloadId), { tenantId: tenantOf(req) });
     if (!w) return fail(res, 404, 'workload not found');
     const result = ctx.engine.classify({
       disposition: w.disposition || undefined,
@@ -189,7 +201,7 @@ function mountReconcile(app, ctx, auth) {
       const body = req.body || {};
       const workloadId = str(body.workloadId).trim();
       if (!workloadId) return fail(res, 400, 'reconcile requires a workloadId');
-      const w = await ctx.store.getWorkload(workloadId);
+      const w = await ctx.store.getWorkload(workloadId, { tenantId: tenantOf(req) });
       if (!w) return fail(res, 404, 'workload not found');
       const connector = connectorFor(ctx, body.connector);
       const unit = unitFromWorkload(w);

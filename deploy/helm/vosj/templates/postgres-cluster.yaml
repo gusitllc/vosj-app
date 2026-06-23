@@ -1,0 +1,138 @@
+{{- /*
+postgres-cluster.yaml — CloudNativePG (CNPG) `Cluster` for the system-of-record
+(PKG-PG-HA-VALUES, gap 146, whitepaper §14.4 durability).
+
+Codifies, as config-as-code, the §14.4 durability requirement for the database
+that holds the tamper-evident LEDGER (and templates/workloads/waves/gates/waivers/
+tool log): QUORUM-BASED SYNCHRONOUS replication across >=3 instances, continuous
+WAL archiving + base backups to an object store, and a PITR recovery window. The
+LEDGER is the system-of-record whose durability the stated RPO protects — a lost
+WAL segment is a lost audit row (see docs/audits/DB-HA-RPO-RTO.md).
+
+Gated behind .Values.postgresHA.enabled (DEFAULT false): the in-memory and
+single-PVC POC paths are UNAFFECTED unless an operator opts in. Rendering this
+object is honest infra-as-code (a valid CNPG Cluster CR); APPLYING it needs the
+CNPG operator installed + a reachable object store, and PROVISIONING a live
+quorum-replicated cluster with a TESTED restore is a deploy-time/operator action
+(DEPLOYMENT.md §7.1), not CE runtime code.
+
+FAIL-CLOSED render guards (no insecure default ever silently shipped):
+  - instances < 3 while enabled  -> hard error (quorum needs an odd majority);
+  - backup.enabled with an empty barmanObjectStore.destinationPath -> hard error
+    (a backup with nowhere to write is not durability);
+  - backup.enabled with no credentials secretName -> the backup stanza is NOT
+    rendered (a backup with no credentials cannot archive — deny, don't pretend).
+*/ -}}
+{{- if .Values.postgresHA.enabled }}
+{{- $ha := .Values.postgresHA }}
+{{- $instances := int $ha.instances }}
+{{- if lt $instances 3 }}
+{{- fail (printf "postgresHA.instances must be >= 3 for quorum synchronous replication (§14.4); got %d" $instances) }}
+{{- end }}
+{{- $name := $ha.name | default (printf "%s-pg" (include "vosj.fullname" .)) }}
+{{- $sync := $ha.synchronous | default dict }}
+{{- $backup := $ha.backup | default dict }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "vosj.labels" . | nindent 4 }}
+    {{- with $ha.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    # §14.4 — quorum synchronous replication (>=3) + WAL/PITR. The LEDGER is the
+    # system-of-record whose durability this RPO protects (see DB-HA-RPO-RTO.md).
+    vosj.com/durability: quorum-sync-wal-pitr
+    {{- with $ha.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  # >=3 instances: one primary + standbys, sized so a single failure keeps a
+  # majority (quorum) up. Enforced >= 3 by the render guard above.
+  instances: {{ $instances }}
+  imageName: {{ $ha.imageName | quote }}
+
+  bootstrap:
+    initdb:
+      database: {{ $ha.bootstrap.database | quote }}
+      owner: {{ $ha.bootstrap.owner | quote }}
+
+  storage:
+    size: {{ $ha.storage.size | quote }}
+    {{- with $ha.storage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+
+  {{- /* Spread instances across nodes so one node loss cannot break quorum. */}}
+  {{- with $ha.affinity }}
+  affinity:
+    enablePodAntiAffinity: {{ .enablePodAntiAffinity }}
+    topologyKey: {{ .topologyKey | quote }}
+  {{- end }}
+
+  postgresql:
+    {{- /* (§14.4) Quorum-based SYNCHRONOUS replication. method ANY => commit
+           waits for `number` standbys to confirm the WAL write. dataDurability
+           `required` NEVER silently degrades to async on standby loss — that is
+           the fail-closed posture the ledger RPO depends on. */}}
+    {{- if $sync.enabled }}
+    synchronous:
+      method: {{ $sync.method | default "any" | quote }}
+      number: {{ int ($sync.number | default 1) }}
+      dataDurability: {{ $sync.dataDurability | default "required" | quote }}
+    {{- end }}
+
+  {{- /* Legacy quorum knobs (older CNPG): top-level min/maxSyncReplicas.
+         Kept alongside the modern stanza for broad operator compatibility;
+         1 <= minSyncReplicas <= maxSyncReplicas <= instances-1. */}}
+  {{- if $sync.enabled }}
+  minSyncReplicas: {{ int ($sync.minSyncReplicas | default 1) }}
+  maxSyncReplicas: {{ int ($sync.maxSyncReplicas | default 1) }}
+  {{- end }}
+
+  {{- /* (§14.4) Continuous backup: WAL archiving + base backups to an object
+         store, with a PITR recovery window. Fail-closed: destinationPath is
+         REQUIRED and a missing credentials secret means NO backup is rendered
+         (a backup that cannot write/authenticate is not durability). */}}
+  {{- if $backup.enabled }}
+  {{- $obj := $backup.barmanObjectStore | default dict }}
+  {{- if not $obj.destinationPath }}
+  {{- fail "postgresHA.backup.enabled requires backup.barmanObjectStore.destinationPath (§14.4: WAL/PITR has nowhere to write otherwise)" }}
+  {{- end }}
+  {{- $creds := $obj.credentials | default dict }}
+  {{- if $creds.secretName }}
+  backup:
+    retentionPolicy: {{ $backup.retentionPolicy | default "30d" | quote }}
+    barmanObjectStore:
+      destinationPath: {{ $obj.destinationPath | quote }}
+      {{- with $obj.endpointURL }}
+      endpointURL: {{ . | quote }}
+      {{- end }}
+      {{- if eq ($creds.provider | default "s3") "s3" }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ $creds.secretName | quote }}
+          key: {{ $creds.s3.keyIdKey | default "ACCESS_KEY_ID" | quote }}
+        secretAccessKey:
+          name: {{ $creds.secretName | quote }}
+          key: {{ $creds.s3.secretAccessKey | default "ACCESS_SECRET_KEY" | quote }}
+      {{- else if eq $creds.provider "azure" }}
+      azureCredentials:
+        connectionString:
+          name: {{ $creds.secretName | quote }}
+          key: {{ $creds.azure.connectionStringKey | default "AZURE_CONNECTION_STRING" | quote }}
+      {{- end }}
+      {{- with $obj.wal }}
+      wal:
+        compression: {{ .compression | default "gzip" | quote }}
+        maxParallel: {{ int (.maxParallel | default 2) }}
+      {{- end }}
+      {{- with $obj.data }}
+      data:
+        compression: {{ .compression | default "gzip" | quote }}
+      {{- end }}
+  {{- end }}
+  {{- end }}
+{{- end }}

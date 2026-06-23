@@ -124,3 +124,179 @@ migrationJob:
   enabled: true
   backoffLimit: 3
   activeDeadlineSeconds: 300
+
+# ---------------------------------------------------------------------------
+# Default-deny egress NetworkPolicy (whitepaper §15.8, zero-trust).
+# Maps to CIS Kubernetes Benchmark 5.3.2 ("Ensure that all Namespaces have
+# NetworkPolicies defined"): the engine pod gets an EMPTY default-deny egress
+# rule plus an explicit allow-list. Anything not on the list is dropped — a
+# compromised pod cannot exfiltrate to an arbitrary endpoint (fail-closed).
+#
+# Rendering this chart object is honest infra-as-code: the template produces a
+# correct, lint-passing NetworkPolicy. APPLYING it to a live cluster (and the
+# cluster running a CNI that enforces NetworkPolicy, e.g. Calico/Cilium/Azure
+# CNI) is a separate deploy-time action.
+networkPolicy:
+  # -- Render the NetworkPolicy at all. Default true (secure-by-default).
+  enabled: true
+
+  egress:
+    # ---- DNS resolution (almost always required for everything below) ----
+    # kube-dns/CoreDNS in kube-system on UDP+TCP 53. Without this, name
+    # resolution to PG / model / source-control breaks under default-deny.
+    dns:
+      enabled: true
+      # Label selector for the DNS service's namespace (kube-system by default).
+      namespaceSelector:
+        kubernetes.io/metadata.name: kube-system
+      # Optional pod selector to pin the rule to the kube-dns pods only.
+      podSelector:
+        k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+
+    # ---- PostgreSQL (state store) ----
+    # When config.postgres.host is set, allow egress to it on its port. The
+    # host may be an in-cluster Service DNS name; the policy matches by CIDR,
+    # so set postgresCidr to the resolved address/range when in-cluster
+    # selectors are not used. Leave postgresCidr empty to rely solely on the
+    # custom allow-list below for PG reachability.
+    postgres:
+      enabled: true
+      # CIDR for the PG endpoint (e.g. "10.0.0.0/16" or a /32 host). Empty =>
+      # no CIDR rule is rendered (use a namespace/pod selector via `allow`).
+      cidr: ""
+      # Port comes from config.postgres.port unless overridden here.
+      port: null
+
+    # ---- Model / inference endpoint allow-list (egress allow-list) ----
+    # The approved AI model endpoint(s). CIDR + port, fail-closed: empty list
+    # renders no model egress (deny). Populate with the model gateway's range.
+    model:
+      enabled: true
+      # List of { cidr, port } the engine may reach for model/inference calls.
+      targets: []
+      #  - { cidr: "20.0.0.0/16", port: 443 }
+
+    # ---- Source control (git / GitHub / Azure DevOps) allow-list ----
+    sourceControl:
+      enabled: true
+      # List of { cidr, port } for approved source-control endpoints.
+      targets: []
+      #  - { cidr: "140.82.112.0/20", port: 443 }   # github.com range, example
+
+    # ---- Escape hatch: arbitrary additional allow rules ----
+    # Each entry is a raw NetworkPolicyEgressRule (to:[...], ports:[...]) merged
+    # verbatim. Use for in-cluster selectors (namespaceSelector/podSelector) or
+    # extra approved targets. Keep this list TIGHT — every entry widens egress.
+    allow: []
+    #  - to:
+    #      - ipBlock: { cidr: 0.0.0.0/0, except: ["169.254.169.254/32"] }
+    #    ports:
+    #      - { protocol: TCP, port: 443 }
+
+# ---------------------------------------------------------------------------
+# PostgreSQL HA — CloudNativePG Cluster (whitepaper §14.4 durability).
+#
+# Renders a CloudNativePG (CNPG) `Cluster` custom resource for the system-of-
+# record (templates, workloads, waves, gates, the tamper-evident LEDGER, waivers,
+# tool log). The LEDGER is the system-of-record whose durability the stated RPO
+# protects: a lost WAL segment is a lost audit row. See docs/audits/DB-HA-RPO-RTO.md.
+#
+# DEFAULT false: the in-memory and single-PVC POC paths (deploy/poc, the
+# postgres:16-alpine StatefulSet) are UNAFFECTED unless an operator opts in. When
+# enabled, the chart renders:
+#   - instances: >=3 (quorum needs an odd majority; default 3),
+#   - quorum-based SYNCHRONOUS replication (method ANY, fail-closed dataDurability),
+#   - continuous WAL archiving + base backups to an object store (barmanObjectStore),
+#   - a recovery window (PITR) driving CNPG's retention policy.
+#
+# HONEST SCOPE: this template RENDERS a valid CNPG Cluster CR (config-as-code).
+# It requires the CNPG operator installed in the cluster and a reachable object
+# store; PROVISIONING the live quorum-replicated cluster + a TESTED restore is a
+# deploy-time/operator action (DEPLOYMENT.md §7.1), not CE runtime code.
+postgresHA:
+  # -- Render the CNPG Cluster CR at all. Default FALSE (POC/memory paths intact).
+  enabled: false
+
+  # -- Cluster object name. Empty => "<fullname>-pg".
+  name: ""
+
+  # -- PostgreSQL major image. Pinned for reproducible rollouts (avoid :latest).
+  imageName: "ghcr.io/cloudnative-pg/postgresql:17.4"
+
+  # -- Instance count. MUST be >= 3 for quorum sync (§14.4). The template
+  # fail-closes (errors at render) if set below 3 while enabled.
+  instances: 3
+
+  # -- Bootstrap: database + owner role created on first init.
+  bootstrap:
+    database: vosj
+    owner: vosj
+
+  # -- Per-instance storage. SSD/premium class recommended for WAL throughput.
+  storage:
+    size: 50Gi
+    storageClass: ""   # "" => cluster default StorageClass
+
+  # -- Quorum-based synchronous replication (§14.4: "quorum synchronous").
+  # method ANY => commit waits for `number` of the standbys to confirm the WAL
+  # write (synchronous_standby_names = "ANY <number> (...)"). dataDurability
+  # `required` (default) NEVER silently degrades to async on standby loss — that
+  # is the fail-closed durability posture the ledger RPO depends on.
+  synchronous:
+    enabled: true
+    method: any
+    # Quorum size. With instances:3 => 1 (primary + ANY 1 of 2 standbys confirm).
+    number: 1
+    # `required` (fail-closed durability) | `preferred` (self-heal, may go async).
+    # Default required: a confirmed commit is on >=2 nodes before the client sees ok.
+    dataDurability: required
+    # Legacy quorum knobs (older CNPG): 1 <= minSyncReplicas <= maxSyncReplicas.
+    minSyncReplicas: 1
+    maxSyncReplicas: 1
+
+  # -- Continuous backup: WAL archiving + base backups to an object store, plus
+  # a PITR recovery window. Disabled by default (no object store assumed); enable
+  # and supply destinationPath + a credentials Secret to satisfy §14.4 fully.
+  backup:
+    enabled: false
+    # barman-cloud object store (S3/Azure Blob/GCS). destinationPath is required
+    # when backup.enabled=true — the template fail-closes if it is empty.
+    barmanObjectStore:
+      destinationPath: ""        # e.g. "s3://vosj-backups/" or "https://<acct>.blob.core.windows.net/vosj"
+      endpointURL: ""            # optional custom endpoint (S3-compatible)
+      # Credentials are read from a pre-created Secret (never inlined here).
+      # Provide the Secret name + the keys holding the id/key (fail-closed: a
+      # backup with no credentials secret will not be rendered).
+      credentials:
+        secretName: ""           # name of the existing object-store creds Secret
+        # Which provider block to render: "s3" | "azure" | "google".
+        provider: s3
+        # S3: keys inside the secret for the access key id / secret access key.
+        s3:
+          keyIdKey: ACCESS_KEY_ID
+          secretAccessKey: ACCESS_SECRET_KEY
+        # Azure Blob: key inside the secret for the storage account connection string.
+        azure:
+          connectionStringKey: AZURE_CONNECTION_STRING
+      wal:
+        compression: gzip
+        maxParallel: 2
+      data:
+        compression: gzip
+    # PITR recovery window — CNPG turns this into a "RECOVERY WINDOW OF <n>"
+    # retention policy and prunes older base backups/WAL. This bounds how far
+    # back a point-in-time restore can target. Stated RTO/RPO: see the audit doc.
+    retentionPolicy: 30d
+
+  # -- Pod anti-affinity: spread instances across nodes so a single node loss
+  # cannot take the quorum below majority. Default true (HA-by-default).
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+
+  # -- Extra labels/annotations merged onto the Cluster metadata.
+  labels: {}
+  annotations: {}

@@ -43,13 +43,20 @@ async function reconcile(unit, connector, ctx = {}) {
   const config = ctx.config || {};
   const baselineFresh = isFreshBaseline(unit, config);
 
+  // Pre-switch categories are config-driven: an operator may override the gate set
+  // via config.reconcileCategories (VOSJ_RECONCILE_CATEGORIES). Absent => the
+  // built-in default frozen list (existing behaviour and tests unchanged).
+  const preSwitch = (Array.isArray(config.reconcileCategories) && config.reconcileCategories.length)
+    ? config.reconcileCategories
+    : PRE_SWITCH_CATEGORIES;
+
   const result = await connector.verify(unit, ctx);
   const reported = (result && Array.isArray(result.categories)) ? result.categories : [];
 
   // Normalise categories; fail-closed for any pre-switch category not proven ok.
   const byName = {};
   for (const c of reported) byName[c.name] = c;
-  const categories = PRE_SWITCH_CATEGORIES.map((name) => {
+  const categories = preSwitch.map((name) => {
     const c = byName[name];
     return {
       name,

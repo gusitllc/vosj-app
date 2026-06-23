@@ -7,6 +7,18 @@
 
 const { StateStore } = require('../contracts');
 
+// Per-tenant data isolation (PKG-TENANT-ISOLATION, §14.3). Every tenant-scoped
+// list/get/save carries a tenant predicate; when a caller omits a tenant we resolve
+// the single CE tenant 'default' so existing single-tenant data and the existing
+// tests keep working. This is the CE floor — multi-tenant enforcement at scale +
+// EE RBAC is EE. tenantOf() is the ONE place the default is decided (no scattered
+// insecure defaults): an empty/blank tenant collapses to 'default', never to "all".
+const DEFAULT_TENANT = 'default';
+function tenantOf(t) {
+  const v = (t === undefined || t === null) ? '' : String(t).trim();
+  return v || DEFAULT_TENANT;
+}
+
 // ---------------------------------------------------------------------------
 // In-memory store
 // ---------------------------------------------------------------------------
@@ -29,39 +41,62 @@ class MemoryStateStore extends StateStore {
   async health() { return { ok: true, kind: this.kind }; }
 
   async listWorkloads(filter = {}) {
-    let rows = [...this._workloads.values()];
+    const tenant = tenantOf(filter.tenantId);
+    let rows = [...this._workloads.values()].filter((w) => tenantOf(w.tenant_id) === tenant);
     if (filter.waveId) rows = rows.filter((w) => w.wave_id === filter.waveId);
     return rows;
   }
-  async getWorkload(id) { return this._workloads.get(id) || null; }
+  async getWorkload(id, filter = {}) {
+    const row = this._workloads.get(id) || null;
+    if (!row) return null;
+    if (tenantOf(row.tenant_id) !== tenantOf(filter.tenantId)) return null;
+    return row;
+  }
   async saveWorkload(w) {
+    const prev = this._workloads.get(w.id) || {};
     const row = Object.assign({ created_at: new Date().toISOString() },
-      this._workloads.get(w.id) || {}, w, { updated_at: new Date().toISOString() });
+      prev, w, { tenant_id: tenantOf(w.tenant_id || prev.tenant_id),
+        updated_at: new Date().toISOString() });
     this._workloads.set(w.id, row);
     return row;
   }
 
-  async listWaves() { return [...this._waves.values()]; }
-  async getWave(id) { return this._waves.get(id) || null; }
+  async listWaves(filter = {}) {
+    const tenant = tenantOf(filter.tenantId);
+    return [...this._waves.values()].filter((w) => tenantOf(w.tenant_id) === tenant);
+  }
+  async getWave(id, filter = {}) {
+    const row = this._waves.get(id) || null;
+    if (!row) return null;
+    if (tenantOf(row.tenant_id) !== tenantOf(filter.tenantId)) return null;
+    return row;
+  }
   async saveWave(wave) {
+    const prev = this._waves.get(wave.id) || {};
     const row = Object.assign({ created_at: new Date().toISOString() },
-      this._waves.get(wave.id) || {}, wave, { updated_at: new Date().toISOString() });
+      prev, wave, { tenant_id: tenantOf(wave.tenant_id || prev.tenant_id),
+        updated_at: new Date().toISOString() });
     this._waves.set(wave.id, row);
     return row;
   }
 
-  async getGate(id) {
-    for (const g of this._gates.values()) if (g.id === id) return g;
+  async getGate(id, filter = {}) {
+    const tenant = tenantOf(filter.tenantId);
+    for (const g of this._gates.values()) {
+      if (g.id === id && tenantOf(g.tenant_id) === tenant) return g;
+    }
     return null;
   }
   async listGates(filter = {}) {
-    let rows = [...this._gates.values()];
+    const tenant = tenantOf(filter.tenantId);
+    let rows = [...this._gates.values()].filter((g) => tenantOf(g.tenant_id) === tenant);
     if (filter.migrationId) rows = rows.filter((g) => g.migrationId === filter.migrationId);
     return rows;
   }
   async saveGate(gate) {
-    this._gates.set(`${gate.id}:${gate.migrationId || ''}`, gate);
-    return gate;
+    const row = Object.assign({}, gate, { tenant_id: tenantOf(gate.tenant_id) });
+    this._gates.set(`${row.id}:${row.migrationId || ''}`, row);
+    return row;
   }
 
   async appendLedger(row) { this._ledger.push(row); return row; }
@@ -145,74 +180,90 @@ class PgStateStore extends StateStore {
   }
 
   async listWorkloads(filter = {}) {
+    const tenant = tenantOf(filter.tenantId);
     if (filter.waveId) {
       const r = await this.pool.query(
-        'SELECT * FROM vosj.workloads WHERE wave_id = $1 ORDER BY created_at', [filter.waveId]);
+        'SELECT * FROM vosj.workloads WHERE tenant_id = $1 AND wave_id = $2 ORDER BY created_at',
+        [tenant, filter.waveId]);
       return r.rows;
     }
-    const r = await this.pool.query('SELECT * FROM vosj.workloads ORDER BY created_at');
+    const r = await this.pool.query(
+      'SELECT * FROM vosj.workloads WHERE tenant_id = $1 ORDER BY created_at', [tenant]);
     return r.rows;
   }
-  async getWorkload(id) {
-    const r = await this.pool.query('SELECT * FROM vosj.workloads WHERE id = $1', [id]);
+  async getWorkload(id, filter = {}) {
+    const r = await this.pool.query(
+      'SELECT * FROM vosj.workloads WHERE id = $1 AND tenant_id = $2',
+      [id, tenantOf(filter.tenantId)]);
     return r.rows[0] || null;
   }
   async saveWorkload(w) {
     const r = await this.pool.query(
-      `INSERT INTO vosj.workloads (id, name, disposition, state, wave_id, baseline_at, attributes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
+      `INSERT INTO vosj.workloads (id, name, disposition, state, wave_id, baseline_at, attributes, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (id) DO UPDATE SET
          name=$2, disposition=$3, state=$4, wave_id=$5, baseline_at=$6,
-         attributes=$7, updated_at=now()
+         attributes=$7, tenant_id=$8, updated_at=now()
        RETURNING *`,
       [w.id, w.name, w.disposition || null, w.state || 'legacy', w.wave_id || null,
-        w.baseline_at || null, w.attributes || {}]);
+        w.baseline_at || null, w.attributes || {}, tenantOf(w.tenant_id)]);
     return r.rows[0];
   }
 
-  async listWaves() {
-    const r = await this.pool.query('SELECT * FROM vosj.waves ORDER BY created_at');
+  async listWaves(filter = {}) {
+    const r = await this.pool.query(
+      'SELECT * FROM vosj.waves WHERE tenant_id = $1 ORDER BY created_at',
+      [tenantOf(filter.tenantId)]);
     return r.rows;
   }
-  async getWave(id) {
-    const r = await this.pool.query('SELECT * FROM vosj.waves WHERE id = $1', [id]);
+  async getWave(id, filter = {}) {
+    const r = await this.pool.query(
+      'SELECT * FROM vosj.waves WHERE id = $1 AND tenant_id = $2',
+      [id, tenantOf(filter.tenantId)]);
     return r.rows[0] || null;
   }
   async saveWave(wave) {
     const r = await this.pool.query(
-      `INSERT INTO vosj.waves (id, name, state, framework_template_id, framework_version, plan)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO vosj.waves (id, name, state, framework_template_id, framework_version, plan, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (id) DO UPDATE SET
          name=$2, state=$3, framework_template_id=$4, framework_version=$5,
-         plan=$6, updated_at=now()
+         plan=$6, tenant_id=$7, updated_at=now()
        RETURNING *`,
       [wave.id, wave.name, wave.state || 'P1', wave.framework_template_id || null,
-        wave.framework_version || null, wave.plan || {}]);
+        wave.framework_version || null, wave.plan || {}, tenantOf(wave.tenant_id)]);
     return r.rows[0];
   }
 
-  async getGate(id) {
-    const r = await this.pool.query('SELECT * FROM vosj.gates WHERE id = $1 LIMIT 1', [id]);
+  async getGate(id, filter = {}) {
+    const r = await this.pool.query(
+      'SELECT * FROM vosj.gates WHERE id = $1 AND tenant_id = $2 LIMIT 1',
+      [id, tenantOf(filter.tenantId)]);
     return r.rows[0] || null;
   }
   async listGates(filter = {}) {
+    const tenant = tenantOf(filter.tenantId);
     if (filter.migrationId) {
       const r = await this.pool.query(
-        'SELECT * FROM vosj.gates WHERE migration_id = $1 ORDER BY signed_at', [filter.migrationId]);
+        'SELECT * FROM vosj.gates WHERE tenant_id = $1 AND migration_id = $2 ORDER BY signed_at',
+        [tenant, filter.migrationId]);
       return r.rows;
     }
-    const r = await this.pool.query('SELECT * FROM vosj.gates ORDER BY signed_at');
+    const r = await this.pool.query(
+      'SELECT * FROM vosj.gates WHERE tenant_id = $1 ORDER BY signed_at', [tenant]);
     return r.rows;
   }
   async saveGate(gate) {
     const r = await this.pool.query(
-      `INSERT INTO vosj.gates (id, migration_id, unit_id, signed_by, signer_role, ledger_hash, signed_at)
-       VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()))
+      `INSERT INTO vosj.gates (id, migration_id, unit_id, signed_by, signer_role, ledger_hash, signed_at, tenant_id)
+       VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()), $8)
        ON CONFLICT (id, migration_id) DO UPDATE SET
-         unit_id=$3, signed_by=$4, signer_role=$5, ledger_hash=$6, signed_at=COALESCE($7, now())
+         unit_id=$3, signed_by=$4, signer_role=$5, ledger_hash=$6,
+         signed_at=COALESCE($7, now()), tenant_id=$8
        RETURNING *`,
       [gate.id, gate.migrationId || '', gate.unitId || null, gate.signedBy || null,
-        gate.signerRole || null, gate.ledgerHash || null, gate.signedAt || null]);
+        gate.signerRole || null, gate.ledgerHash || null, gate.signedAt || null,
+        tenantOf(gate.tenant_id)]);
     return r.rows[0];
   }
 

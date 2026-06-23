@@ -59,15 +59,18 @@ class StateStore {
   async init() { throw notImplemented('StateStore', 'init'); }
   async health() { throw notImplemented('StateStore', 'health'); }
 
+  // Tenant-scoped reads accept an optional { tenantId } filter (PKG-TENANT-ISOLATION,
+  // §14.3); an omitted/blank tenant resolves to the single CE tenant 'default' so
+  // single-tenant CE is unaffected. A save stamps the row's tenant_id (defaulting).
   async listWorkloads(filter) { throw notImplemented('StateStore', 'listWorkloads'); }
-  async getWorkload(id) { throw notImplemented('StateStore', 'getWorkload'); }
+  async getWorkload(id, filter) { throw notImplemented('StateStore', 'getWorkload'); }
   async saveWorkload(workload) { throw notImplemented('StateStore', 'saveWorkload'); }
 
   async listWaves(filter) { throw notImplemented('StateStore', 'listWaves'); }
-  async getWave(id) { throw notImplemented('StateStore', 'getWave'); }
+  async getWave(id, filter) { throw notImplemented('StateStore', 'getWave'); }
   async saveWave(wave) { throw notImplemented('StateStore', 'saveWave'); }
 
-  async getGate(id) { throw notImplemented('StateStore', 'getGate'); }
+  async getGate(id, filter) { throw notImplemented('StateStore', 'getGate'); }
   async listGates(filter) { throw notImplemented('StateStore', 'listGates'); }
   async saveGate(gate) { throw notImplemented('StateStore', 'saveGate'); }
 

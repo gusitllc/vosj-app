@@ -28,6 +28,29 @@ ALTER TABLE IF EXISTS vosj.templates ADD COLUMN IF NOT EXISTS owner      TEXT;
 ALTER TABLE IF EXISTS vosj.templates ADD COLUMN IF NOT EXISTS tenant_id  TEXT;
 ALTER TABLE IF EXISTS vosj.templates ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 
+-- Per-tenant data isolation (PKG-TENANT-ISOLATION, §14.3 — "per-tenant data
+-- isolation on every query"). CE floor: add a tenant_id discriminator to every
+-- tenant-scoped store table and default it to a single CE tenant ('default') so
+-- existing single-tenant data is unaffected and existing single-tenant CE keeps
+-- working. The per-tenant query FILTER is applied parameterised in
+-- src/db/statestore.js (every list/get/save carries the tenant predicate); this
+-- column is the structural floor it filters on. Multi-tenant ENFORCEMENT at scale
+-- + EE RBAC is EE — this delivers the CE column + composite index + default-tenant
+-- floor only. Idempotent (IF NOT EXISTS) so it can land in any order; the existing
+-- vosj.templates.tenant_id column above is left as-is (nullable, visibility-scoped).
+-- NOTE: schema.sql is shared with PKG-VAULT/PKG-METERING/PKG-FOUR-EYES/
+-- PKG-TEMPLATE-LIFECYCLE — this block is self-contained and IF NOT EXISTS so the
+-- packages can land in any order without colliding.
+ALTER TABLE IF EXISTS vosj.workloads ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE IF EXISTS vosj.waves     ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE IF EXISTS vosj.gates     ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE IF EXISTS vosj.metering  ADD COLUMN IF NOT EXISTS tenant_id TEXT NOT NULL DEFAULT 'default';
+
+CREATE INDEX IF NOT EXISTS vosj_workloads_tenant_idx ON vosj.workloads (tenant_id, wave_id);
+CREATE INDEX IF NOT EXISTS vosj_waves_tenant_idx     ON vosj.waves     (tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS vosj_gates_tenant_idx     ON vosj.gates     (tenant_id, migration_id);
+CREATE INDEX IF NOT EXISTS vosj_metering_tenant_idx  ON vosj.metering  (tenant_id, wave_id);
+
 CREATE INDEX IF NOT EXISTS vosj_templates_visibility_idx ON vosj.templates (visibility, tenant_id);
 CREATE INDEX IF NOT EXISTS vosj_templates_lineage_idx    ON vosj.templates (parent_template_id);
 

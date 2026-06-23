@@ -16,6 +16,21 @@ const { buildRegistry } = require('./rbac');
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
 
+// Per-tenant data isolation (PKG-TENANT-ISOLATION, §14.3). The principal carries a
+// `tenant` resolved here; the route layer threads req.principal.tenant into every
+// store call so reads/writes are filtered to that tenant. CE resolves the tenant
+// from the x-vosj-tenant request header and defaults to the single CE tenant
+// 'default' so single-tenant CE keeps working. Resolution is fail-closed: a blank /
+// missing header collapses to 'default' (never to "all tenants"), and the value is
+// length-bounded. Multi-tenant ENFORCEMENT at scale + a per-token tenant mapping +
+// EE RBAC is EE — this is the CE floor.
+const DEFAULT_TENANT = 'default';
+function resolveTenant(req) {
+  const raw = (req && req.headers && req.headers['x-vosj-tenant']) || '';
+  const v = String(raw).trim().slice(0, 200);
+  return v || DEFAULT_TENANT;
+}
+
 // Module-level RBAC registry. Empty (unconfigured) by default => requireCapability
 // preserves today's behaviour (the principal's own capability Set). configureRbac()
 // is called once by requireAuth(ctx) so routes need not change their call sites.
@@ -63,7 +78,7 @@ function requireAuth(ctx) {
       if (!isLocalRequest(req)) {
         return fail(res, 401, "auth mode 'open' is restricted to localhost");
       }
-      req.principal = openPrincipal();
+      req.principal = openPrincipal(req);
       return next();
     }
 
@@ -167,15 +182,19 @@ function tokenPrincipal(req) {
     id: String(subject).slice(0, 200),
     kind: 'agent',
     mode: 'token',
+    tenant: resolveTenant(req),
     capabilities: capabilitySet(),
   };
 }
 
-function openPrincipal() {
-  return { id: 'localhost-dev', kind: 'agent', mode: 'open', capabilities: capabilitySet() };
+function openPrincipal(req) {
+  return {
+    id: 'localhost-dev', kind: 'agent', mode: 'open',
+    tenant: resolveTenant(req), capabilities: capabilitySet(),
+  };
 }
 
 module.exports = {
   requireAuth, requireCapability, configureRbac, getRbacRegistry, holdsCapability,
-  CE_CAPABILITIES, isLocalRequest,
+  CE_CAPABILITIES, isLocalRequest, resolveTenant,
 };

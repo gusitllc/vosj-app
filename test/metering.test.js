@@ -181,6 +181,18 @@ test('publishTransition emits a transition event carrying the signed ledger hash
   assert.equal(evt.ledgerHash, 'abc123');
 });
 
+// closeServer(server) — fully tear an http server down so the test process exits.
+// server.close() alone only STOPS ACCEPTING new sockets; an SSE stream is a kept-
+// alive connection that would keep the event loop (and the test runner) alive
+// forever. closeAllConnections() force-drops live sockets first (Node >=18.2),
+// then close() resolves. Without this the file hangs after the last assertion.
+function closeServer(server) {
+  return new Promise((resolve) => {
+    if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+    server.close(() => resolve());
+  });
+}
+
 // SSE: a subscribed client receives a transition event streamed live.
 test('GET /api/events streams a transition event to a subscribed SSE client', async () => {
   const ctx = await buildTestCtx({ AUTH_MODE: 'token', AUTH_TOKEN: 'test-token' });
@@ -191,8 +203,9 @@ test('GET /api/events streams a transition event to a subscribed SSE client', as
   const port = server.address().port;
 
   const chunks = [];
+  let client = null;
   const transition = new Promise((resolve, reject) => {
-    const req = http.request(
+    client = http.request(
       { host: '127.0.0.1', port, path: '/api/events', method: 'GET',
         headers: { Authorization: 'Bearer test-token', Accept: 'text/event-stream' } },
       (res) => {
@@ -205,17 +218,22 @@ test('GET /api/events streams a transition event to a subscribed SSE client', as
           if (buf.includes('"event":"transition"')) resolve(buf);
         });
       });
-    req.on('error', reject);
-    req.end();
+    client.on('error', reject);
+    client.end();
     // once connected, emit a transition on the shared bus; the client should get it.
     setTimeout(() => events.publishTransition(ctx, { waveId: 'w', to: 'P3', ledgerHash: 'deadbeef' }), 50);
   });
 
-  const body = await transition;
-  assert.match(body, /event: transition/);
-  assert.match(body, /"to":"P3"/);
-  assert.match(body, /"ledgerHash":"deadbeef"/);
-  server.close();
+  try {
+    const body = await transition;
+    assert.match(body, /event: transition/);
+    assert.match(body, /"to":"P3"/);
+    assert.match(body, /"ledgerHash":"deadbeef"/);
+  } finally {
+    // Tear the kept-alive SSE client + server down so the process can exit.
+    if (client) client.destroy();
+    await closeServer(server);
+  }
 });
 
 test('GET /api/events requires authentication (data route, fail-closed)', async () => {
@@ -226,14 +244,17 @@ test('GET /api/events requires authentication (data route, fail-closed)', async 
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
 
-  const status = await new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: '/api/events', method: 'GET' },
-      (res) => { resolve(res.statusCode); res.resume(); });
-    req.on('error', reject);
-    req.end();
-  });
-  assert.equal(status, 401, 'no bearer token => 401');
-  server.close();
+  try {
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/events', method: 'GET' },
+        (res) => { resolve(res.statusCode); res.resume(); });
+      req.on('error', reject);
+      req.end();
+    });
+    assert.equal(status, 401, 'no bearer token => 401');
+  } finally {
+    await closeServer(server);
+  }
 });
 
 // ---------------------------------------------------------------------------

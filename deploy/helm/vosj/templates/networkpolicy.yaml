@@ -1,0 +1,96 @@
+{{- /*
+networkpolicy.yaml — default-deny egress for the Vosj CE engine pod (§15.8).
+
+Zero-trust egress: the pod selector matches the chart's selectorLabels, the
+single declared policyType is Egress, and the rules are an EXPLICIT ALLOW-LIST.
+Kubernetes semantics: once a pod is selected by an Egress policy, ALL egress is
+denied EXCEPT what the rules permit — so the absence of a catch-all rule IS the
+default-deny (fail-closed). Maps to CIS Kubernetes Benchmark 5.3.2.
+
+Allow-list (each gated by its own values flag, fail-closed when empty):
+  (i)   DNS to kube-dns (UDP/TCP 53)            — networkPolicy.egress.dns
+  (ii)  PostgreSQL host/port                    — networkPolicy.egress.postgres
+  (iii) Model / inference endpoint(s)           — networkPolicy.egress.model
+  (iv)  Source control endpoint(s)              — networkPolicy.egress.sourceControl
+  (v)   Arbitrary extra approved rules          — networkPolicy.egress.allow
+
+Rendering is config-time; APPLYING to a CNI-enforced cluster is deploy-time.
+*/ -}}
+{{- if .Values.networkPolicy.enabled }}
+{{- $egress := .Values.networkPolicy.egress | default dict }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "vosj.fullname" . }}-egress
+  labels:
+    {{- include "vosj.labels" . | nindent 4 }}
+  annotations:
+    # CIS Kubernetes Benchmark 5.3.2 — default-deny egress with an allow-list.
+    vosj.com/policy: default-deny-egress
+spec:
+  # Bind to exactly the Vosj engine pods (same immutable selector the Deployment uses).
+  podSelector:
+    matchLabels:
+      {{- include "vosj.selectorLabels" . | nindent 6 }}
+  # Egress-only: ingress is intentionally not managed here (front with a Service/Ingress).
+  policyTypes:
+    - Egress
+  egress:
+    {{- /* (i) DNS — required for name resolution under default-deny. */}}
+    {{- with $egress.dns }}
+    {{- if .enabled }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml .namespaceSelector | nindent 14 }}
+          {{- with .podSelector }}
+          podSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+          {{- end }}
+      ports:
+        {{- toYaml .ports | nindent 8 }}
+    {{- end }}
+    {{- end }}
+    {{- /* (ii) PostgreSQL — CIDR + port (port falls back to config.postgres.port). */}}
+    {{- with $egress.postgres }}
+    {{- if and .enabled .cidr }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .port | default $.Values.config.postgres.port }}
+    {{- end }}
+    {{- end }}
+    {{- /* (iii) Model / inference endpoint allow-list (fail-closed: empty => no rule). */}}
+    {{- with $egress.model }}
+    {{- if .enabled }}
+    {{- range .targets }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- /* (iv) Source control allow-list (fail-closed: empty => no rule). */}}
+    {{- with $egress.sourceControl }}
+    {{- if .enabled }}
+    {{- range .targets }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ .port }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- /* (v) Arbitrary extra approved rules — merged verbatim. Keep TIGHT. */}}
+    {{- with $egress.allow }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
